@@ -31,7 +31,7 @@ func TestBuildCacheADD(t *testing.T) {
 		true); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := buildImageWithOut(name,
+	_, out, err := buildImageWithOut(name,
 		fmt.Sprintf(`FROM scratch
 		ADD %s/index.html /`, server.URL),
 		true)
@@ -265,7 +265,7 @@ func TestBuildCopyWildcard(t *testing.T) {
 	}
 
 	if id1 != id2 {
-		t.Fatal(fmt.Errorf("Didn't use the cache"))
+		t.Fatal("didn't use the cache")
 	}
 
 	logDone("build - copy wild card")
@@ -284,7 +284,7 @@ func TestBuildCopyWildcardNoFind(t *testing.T) {
 
 	_, err = buildImageFromContext(name, ctx, true)
 	if err == nil {
-		t.Fatal(fmt.Errorf("Should have failed to find a file"))
+		t.Fatal("should have failed to find a file")
 	}
 	if !strings.Contains(err.Error(), "No source files were specified") {
 		t.Fatalf("Wrong error %v, must be about no source files", err)
@@ -322,7 +322,7 @@ func TestBuildCopyWildcardCache(t *testing.T) {
 	}
 
 	if id1 != id2 {
-		t.Fatal(fmt.Errorf("Didn't use the cache"))
+		t.Fatal("didn't use the cache")
 	}
 
 	logDone("build - copy wild card cache")
@@ -568,11 +568,11 @@ func TestBuildCopyWholeDirToRoot(t *testing.T) {
 	}
 
 	buildDirectory = filepath.Join(buildDirectory, testDirName)
-	test_dir := filepath.Join(buildDirectory, "test_dir")
-	if err := os.MkdirAll(test_dir, 0755); err != nil {
+	testDir := filepath.Join(buildDirectory, "test_dir")
+	if err := os.MkdirAll(testDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(filepath.Join(test_dir, "test_file"), os.O_CREATE, 0644)
+	f, err := os.OpenFile(filepath.Join(testDir, "test_file"), os.O_CREATE, 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -971,6 +971,30 @@ func TestBuildRelativeWorkdir(t *testing.T) {
 		t.Fatalf("Workdir %s, expected %s", res, expected)
 	}
 	logDone("build - relative workdir")
+}
+
+func TestBuildWorkdirWithEnvVariables(t *testing.T) {
+	name := "testbuildworkdirwithenvvariables"
+	expected := "/test1/test2/$MISSING_VAR"
+	defer deleteImages(name)
+	_, err := buildImage(name,
+		`FROM busybox
+		ENV DIRPATH /test1
+		ENV SUBDIRNAME test2
+		WORKDIR $DIRPATH
+		WORKDIR $SUBDIRNAME/$MISSING_VAR`,
+		true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := inspectField(name, "Config.WorkingDir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != expected {
+		t.Fatalf("Workdir %s, expected %s", res, expected)
+	}
+	logDone("build - workdir with env variables")
 }
 
 func TestBuildEnv(t *testing.T) {
@@ -2370,13 +2394,12 @@ func TestBuildOnBuildOutput(t *testing.T) {
 }
 
 func TestBuildInvalidTag(t *testing.T) {
-	name := "abcd:A0123456789B0123456789C0123456789"
+	name := "abcd:" + makeRandomString(200)
 	defer deleteImages(name)
 	_, out, err := buildImageWithOut(name, "FROM scratch\nMAINTAINER quux\n", true)
 	// if the error doesnt check for illegal tag name, or the image is built
 	// then this should fail
-	if !strings.Contains(err.Error(), "Illegal tag name") ||
-		strings.Contains(out, "Sending build context to Docker daemon") {
+	if !strings.Contains(out, "Illegal tag name") || strings.Contains(out, "Sending build context to Docker daemon") {
 		t.Fatalf("failed to stop before building. Error: %s, Output: %s", err, out)
 	}
 	logDone("build - invalid tag")
@@ -2422,4 +2445,108 @@ func TestBuildCmdJSONNoShDashC(t *testing.T) {
 	}
 
 	logDone("build - cmd should not have /bin/sh -c for json")
+}
+
+func TestBuildIgnoreInvalidInstruction(t *testing.T) {
+	name := "testbuildignoreinvalidinstruction"
+	defer deleteImages(name)
+
+	out, _, err := buildImageWithOut(name, "FROM busybox\nfoo bar", true)
+	if err != nil {
+		t.Fatal(err, out)
+	}
+
+	logDone("build - ignore invalid Dockerfile instruction")
+}
+
+func TestBuildEntrypointInheritance(t *testing.T) {
+	defer deleteImages("parent", "child")
+
+	if _, err := buildImage("parent", `
+    FROM busybox
+    ENTRYPOINT exit 130
+    `, true); err != nil {
+		t.Fatal(err)
+	}
+
+	status, _ := runCommand(exec.Command(dockerBinary, "run", "parent"))
+
+	if status != 130 {
+		t.Fatalf("expected exit code 130 but received %d", status)
+	}
+
+	if _, err := buildImage("child", `
+    FROM parent
+    ENTRYPOINT exit 5
+    `, true); err != nil {
+		t.Fatal(err)
+	}
+
+	status, _ = runCommand(exec.Command(dockerBinary, "run", "child"))
+
+	if status != 5 {
+		t.Fatal("expected exit code 5 but received %d", status)
+	}
+
+	logDone("build - clear entrypoint")
+}
+
+func TestBuildEntrypointInheritanceInspect(t *testing.T) {
+	var (
+		name     = "testbuildepinherit"
+		name2    = "testbuildepinherit2"
+		expected = `["/bin/sh","-c","echo quux"]`
+	)
+
+	defer deleteImages(name, name2)
+
+	if _, err := buildImage(name, "FROM busybox\nENTRYPOINT /foo/bar", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := buildImage(name2, fmt.Sprintf("FROM %s\nENTRYPOINT echo quux", name), true); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := inspectFieldJSON(name2, "Config.Entrypoint")
+	if err != nil {
+		t.Fatal(err, res)
+	}
+
+	if res != expected {
+		t.Fatalf("Expected value %s not in Config.Entrypoint: %s", expected, res)
+	}
+
+	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "-t", name2))
+	if err != nil {
+		t.Fatal(err, out)
+	}
+
+	expected = "quux"
+
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("Expected output is %s, got %s", expected, out)
+	}
+
+	logDone("build - entrypoint override inheritance properly")
+}
+
+func TestBuildRunShEntrypoint(t *testing.T) {
+	name := "testbuildentrypoint"
+	defer deleteImages(name)
+	_, err := buildImage(name,
+		`FROM busybox
+                                ENTRYPOINT /bin/echo`,
+		true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "run", name))
+
+	if err != nil {
+		t.Fatal(err, out)
+	}
+
+	logDone("build - entrypoint with /bin/echo running successfully")
 }

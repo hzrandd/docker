@@ -6,6 +6,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Node is a structure used to represent a parse tree.
@@ -42,21 +43,20 @@ func init() {
 	// functions. Errors are propogated up by Parse() and the resulting AST can
 	// be incorporated directly into the existing AST as a next.
 	dispatch = map[string]func(string) (*Node, map[string]bool, error){
-		"user":           parseString,
-		"onbuild":        parseSubCommand,
-		"workdir":        parseString,
-		"env":            parseEnv,
-		"maintainer":     parseString,
-		"docker-version": parseString,
-		"from":           parseString,
-		"add":            parseStringsWhitespaceDelimited,
-		"copy":           parseStringsWhitespaceDelimited,
-		"run":            parseMaybeJSON,
-		"cmd":            parseMaybeJSON,
-		"entrypoint":     parseMaybeJSON,
-		"expose":         parseStringsWhitespaceDelimited,
-		"volume":         parseMaybeJSONToList,
-		"insert":         parseIgnore,
+		"user":       parseString,
+		"onbuild":    parseSubCommand,
+		"workdir":    parseString,
+		"env":        parseEnv,
+		"maintainer": parseString,
+		"from":       parseString,
+		"add":        parseStringsWhitespaceDelimited,
+		"copy":       parseStringsWhitespaceDelimited,
+		"run":        parseMaybeJSON,
+		"cmd":        parseMaybeJSON,
+		"entrypoint": parseMaybeJSON,
+		"expose":     parseStringsWhitespaceDelimited,
+		"volume":     parseMaybeJSONToList,
+		"insert":     parseIgnore,
 	}
 }
 
@@ -96,14 +96,14 @@ func Parse(rwc io.Reader) (*Node, error) {
 	scanner := bufio.NewScanner(rwc)
 
 	for scanner.Scan() {
-		line, child, err := parseLine(strings.TrimSpace(scanner.Text()))
+		line, child, err := parseLine(strings.TrimLeftFunc(scanner.Text(), unicode.IsSpace))
 		if err != nil {
 			return nil, err
 		}
 
 		if line != "" && child == nil {
 			for scanner.Scan() {
-				newline := strings.TrimSpace(scanner.Text())
+				newline := scanner.Text()
 
 				if newline == "" {
 					continue

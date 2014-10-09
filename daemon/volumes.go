@@ -21,6 +21,7 @@ type Mount struct {
 	container   *Container
 	volume      *volumes.Volume
 	Writable    bool
+	copyData    bool
 }
 
 func (container *Container) prepareVolumes() error {
@@ -75,7 +76,7 @@ func (m *Mount) initialize() error {
 	m.container.VolumesRW[m.MountToPath] = m.Writable
 	m.container.Volumes[m.MountToPath] = m.volume.Path
 	m.volume.AddContainer(m.container.ID)
-	if m.Writable && !m.volume.IsBindMount {
+	if m.Writable && m.copyData {
 		// Copy whatever is in the container at the mntToPath to the volume
 		copyExistingContents(containerMntPath, m.volume.Path)
 	}
@@ -89,6 +90,12 @@ func (container *Container) VolumePaths() map[string]struct{} {
 		paths[path] = struct{}{}
 	}
 	return paths
+}
+
+func (container *Container) registerVolumes() {
+	for _, mnt := range container.VolumeMounts() {
+		mnt.volume.AddContainer(container.ID)
+	}
 }
 
 func (container *Container) derefVolumes() {
@@ -115,7 +122,12 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 		if err != nil {
 			return nil, err
 		}
-		mounts[mountToPath] = &Mount{container: container, volume: vol, MountToPath: mountToPath, Writable: writable}
+		mounts[mountToPath] = &Mount{
+			container:   container,
+			volume:      vol,
+			MountToPath: mountToPath,
+			Writable:    writable,
+		}
 	}
 
 	// Get the rest of the volumes
@@ -125,11 +137,22 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 			continue
 		}
 
+		// Check if this has already been created
+		if _, exists := container.Volumes[path]; exists {
+			continue
+		}
+
 		vol, err := container.daemon.volumes.FindOrCreateVolume("", true)
 		if err != nil {
 			return nil, err
 		}
-		mounts[path] = &Mount{container: container, MountToPath: path, volume: vol, Writable: true}
+		mounts[path] = &Mount{
+			container:   container,
+			MountToPath: path,
+			volume:      vol,
+			Writable:    true,
+			copyData:    true,
+		}
 	}
 
 	return mounts, nil
