@@ -552,8 +552,18 @@ instruction. For example:
     WORKDIR c
     RUN pwd
 
-The output of the final `pwd` command in this Dockerfile would be
+The output of the final `pwd` command in this `Dockerfile` would be
 `/a/b/c`.
+
+The `WORKDIR` instruction can resolve environment variables previously set using
+`ENV`. You can only use environment variables explicitly set in the `Dockerfile`.
+For example:
+
+    ENV DIRPATH /path
+    WORKDIR $DIRPATH/$DIRNAME
+
+The output of the final `pwd` command in this `Dockerfile` would be
+`/path/$DIRNAME`
 
 ## ONBUILD
 
@@ -632,7 +642,7 @@ For example you might add something like this:
 
     # Install vnc, xvfb in order to create a 'fake' display and firefox
     RUN apt-get update && apt-get install -y x11vnc xvfb firefox
-    RUN mkdir /.vnc
+    RUN mkdir ~/.vnc
     # Setup a password
     RUN x11vnc -storepasswd 1234 ~/.vnc/passwd
     # Autostart firefox (might not be the best way, but it does the trick)

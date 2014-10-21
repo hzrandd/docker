@@ -4,9 +4,12 @@ page_keywords: API, Docker, rcli, REST, documentation
 
 # Docker Remote API
 
- - The Remote API is replacing `rcli`.
  - By default the Docker daemon listens on `unix:///var/run/docker.sock`
    and the client must have `root` access to interact with the daemon.
+ - If the Docker daemon is set to use an encrypted TCP socket (`--tls`,
+   or `--tlsverify`) as with Boot2Docker 1.3.0, then you need to add extra
+   parameters to `curl` when making test API requests:
+   `curl --insecure --cert ~/.docker/cert.pem --key ~/.docker/key.pem https://boot2docker:2376/images/json`
  - If a group named `docker` exists on your system, docker will apply
    ownership of the socket to the group.
  - The API tends to be REST, but for some complex commands, like attach
@@ -40,22 +43,6 @@ You can still call an old version of the API using
 [*Docker Remote API v1.15*](/reference/api/docker_remote_api_v1.15/)
 
 ### What's new
-
-`POST /build`
-`GET /events`
-
-**New!**
-Now has header: `Content-Type: application/x-json-stream`.
-
-`POST /containers/(id)/exec`
-
-**New!**
-Setup an exec command in a running container `id`.
-
-`POST /exec/(id)/start`
-
-**New!**
-Start an exec command.
 
 ## v1.14
 
@@ -97,7 +84,7 @@ the `tag` parameter at the same time will return an error.
 The `HostConfig.Links` field is now filled correctly
 
 **New!**
-`Sockets` parameter added to the `/info` endpoint listing all the sockets the
+`Sockets` parameter added to the `/info` endpoint listing all the sockets the 
 daemon is configured to listen on.
 
 `POST /containers/(name)/start`
@@ -425,7 +412,7 @@ Builder (/build):
    intermediary buffers
  - Simpler, less memory usage, less disk usage and faster
 
-> **Warning**:
+> **Warning**: 
 > The /build improvements are not reverse-compatible. Pre 1.3 clients will
 > break on /build.
 

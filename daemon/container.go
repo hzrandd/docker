@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -441,7 +442,7 @@ func (container *Container) buildHostnameAndHostsFiles(IP string) error {
 	return container.buildHostsFiles(IP)
 }
 
-func (container *Container) AllocateNetwork() (err error) {
+func (container *Container) AllocateNetwork() error {
 	mode := container.hostConfig.NetworkMode
 	if container.Config.NetworkDisabled || !mode.IsPrivate() {
 		return nil
@@ -449,6 +450,7 @@ func (container *Container) AllocateNetwork() (err error) {
 
 	var (
 		env *engine.Env
+		err error
 		eng = container.daemon.eng
 	)
 
@@ -456,25 +458,22 @@ func (container *Container) AllocateNetwork() (err error) {
 	if env, err = job.Stdout.AddEnv(); err != nil {
 		return err
 	}
-	if err := job.Run(); err != nil {
+	if err = job.Run(); err != nil {
 		return err
 	}
 
 	// Error handling: At this point, the interface is allocated so we have to
 	// make sure that it is always released in case of error, otherwise we
 	// might leak resources.
-	defer func() {
-		if err != nil {
-			eng.Job("release_interface", container.ID).Run()
-		}
-	}()
 
 	if container.Config.PortSpecs != nil {
-		if err := migratePortMappings(container.Config, container.hostConfig); err != nil {
+		if err = migratePortMappings(container.Config, container.hostConfig); err != nil {
+			eng.Job("release_interface", container.ID).Run()
 			return err
 		}
 		container.Config.PortSpecs = nil
-		if err := container.WriteHostConfig(); err != nil {
+		if err = container.WriteHostConfig(); err != nil {
+			eng.Job("release_interface", container.ID).Run()
 			return err
 		}
 	}
@@ -503,7 +502,8 @@ func (container *Container) AllocateNetwork() (err error) {
 	container.NetworkSettings.PortMapping = nil
 
 	for port := range portSpecs {
-		if err := container.allocatePort(eng, port, bindings); err != nil {
+		if err = container.allocatePort(eng, port, bindings); err != nil {
+			eng.Job("release_interface", container.ID).Run()
 			return err
 		}
 	}
@@ -564,6 +564,8 @@ func (container *Container) RestoreNetwork() error {
 // cleanup releases any network resources allocated to the container along with any rules
 // around how containers are linked together.  It also unmounts the container's root filesystem.
 func (container *Container) cleanup() {
+	container.ReleaseNetwork()
+
 	// Disable all active links
 	if container.activeLinks != nil {
 		for _, link := range container.activeLinks {
@@ -824,12 +826,17 @@ func (container *Container) Copy(resource string) (io.ReadCloser, error) {
 		return nil, err
 	}
 
-	var filter []string
-
 	basePath, err := container.getResourcePath(resource)
 	if err != nil {
 		container.Unmount()
 		return nil, err
+	}
+
+	// Check if this is actually in a volume
+	for _, mnt := range container.VolumeMounts() {
+		if len(mnt.MountToPath) > 0 && strings.HasPrefix(resource, mnt.MountToPath[1:]) {
+			return mnt.Export(resource)
+		}
 	}
 
 	stat, err := os.Stat(basePath)
@@ -837,6 +844,7 @@ func (container *Container) Copy(resource string) (io.ReadCloser, error) {
 		container.Unmount()
 		return nil, err
 	}
+	var filter []string
 	if !stat.IsDir() {
 		d, f := path.Split(basePath)
 		basePath = d
@@ -918,22 +926,34 @@ func (container *Container) setupContainerDns() error {
 		return err
 	}
 
-	if config.NetworkMode != "host" && (len(config.Dns) > 0 || len(daemon.config.Dns) > 0 || len(config.DnsSearch) > 0 || len(daemon.config.DnsSearch) > 0) {
-		var (
-			dns       = resolvconf.GetNameservers(resolvConf)
-			dnsSearch = resolvconf.GetSearchDomains(resolvConf)
-		)
-		if len(config.Dns) > 0 {
-			dns = config.Dns
-		} else if len(daemon.config.Dns) > 0 {
-			dns = daemon.config.Dns
+	if config.NetworkMode != "host" {
+		// check configurations for any container/daemon dns settings
+		if len(config.Dns) > 0 || len(daemon.config.Dns) > 0 || len(config.DnsSearch) > 0 || len(daemon.config.DnsSearch) > 0 {
+			var (
+				dns       = resolvconf.GetNameservers(resolvConf)
+				dnsSearch = resolvconf.GetSearchDomains(resolvConf)
+			)
+			if len(config.Dns) > 0 {
+				dns = config.Dns
+			} else if len(daemon.config.Dns) > 0 {
+				dns = daemon.config.Dns
+			}
+			if len(config.DnsSearch) > 0 {
+				dnsSearch = config.DnsSearch
+			} else if len(daemon.config.DnsSearch) > 0 {
+				dnsSearch = daemon.config.DnsSearch
+			}
+			return resolvconf.Build(container.ResolvConfPath, dns, dnsSearch)
 		}
-		if len(config.DnsSearch) > 0 {
-			dnsSearch = config.DnsSearch
-		} else if len(daemon.config.DnsSearch) > 0 {
-			dnsSearch = daemon.config.DnsSearch
+
+		// replace any localhost/127.* nameservers
+		resolvConf = utils.RemoveLocalDns(resolvConf)
+		// if the resulting resolvConf is empty, use DefaultDns
+		if !bytes.Contains(resolvConf, []byte("nameserver")) {
+			log.Infof("No non localhost DNS resolver found in resolv.conf and containers can't use it. Using default external servers : %v", DefaultDns)
+			// prefix the default dns options with nameserver
+			resolvConf = append(resolvConf, []byte("\nnameserver "+strings.Join(DefaultDns, "\nnameserver "))...)
 		}
-		return resolvconf.Build(container.ResolvConfPath, dns, dnsSearch)
 	}
 	return ioutil.WriteFile(container.ResolvConfPath, resolvConf, 0644)
 }
@@ -1007,14 +1027,8 @@ func (container *Container) initializeNetworking() error {
 		container.Config.NetworkDisabled = true
 		return container.buildHostnameAndHostsFiles("127.0.1.1")
 	}
-	// Backward compatibility:
-	// Network allocation used to be done when containers started, not when they
-	// were created, therefore we might be starting a legacy container that
-	// doesn't have networking.
-	if !container.isNetworkAllocated() {
-		if err := container.AllocateNetwork(); err != nil {
-			return err
-		}
+	if err := container.AllocateNetwork(); err != nil {
+		return err
 	}
 	return container.buildHostnameAndHostsFiles(container.NetworkSettings.IPAddress)
 }

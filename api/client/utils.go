@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/dockerversion"
@@ -33,14 +31,7 @@ var (
 )
 
 func (cli *DockerCli) HTTPClient() *http.Client {
-	tr := &http.Transport{
-		TLSClientConfig: cli.tlsConfig,
-		Dial: func(network, addr string) (net.Conn, error) {
-			// Why 32? See issue 8035
-			return net.DialTimeout(cli.proto, cli.addr, 32*time.Second)
-		},
-	}
-	return &http.Client{Transport: tr}
+	return &http.Client{Transport: cli.transport}
 }
 
 func (cli *DockerCli) encodeData(data interface{}) (*bytes.Buffer, error) {
@@ -131,7 +122,7 @@ func (cli *DockerCli) streamHelper(method, path string, setRawTerminal bool, in 
 		in = bytes.NewReader([]byte{})
 	}
 
-	req, err := http.NewRequest(method, fmt.Sprintf("http://v%s%s", api.APIVERSION, path), in)
+	req, err := http.NewRequest(method, fmt.Sprintf("/v%s%s", api.APIVERSION, path), in)
 	if err != nil {
 		return err
 	}
@@ -167,7 +158,7 @@ func (cli *DockerCli) streamHelper(method, path string, setRawTerminal bool, in 
 		return fmt.Errorf("Error: %s", bytes.TrimSpace(body))
 	}
 
-	if api.MatchesContentType(resp.Header.Get("Content-Type"), "application/json") || api.MatchesContentType(resp.Header.Get("Content-Type"), "application/x-json-stream") {
+	if api.MatchesContentType(resp.Header.Get("Content-Type"), "application/json") {
 		return utils.DisplayJSONMessagesStream(resp.Body, stdout, cli.outFd, cli.isTerminalOut)
 	}
 	if stdout != nil || stderr != nil {

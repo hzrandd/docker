@@ -234,22 +234,32 @@ the container exits**, you can add the `--rm` flag:
     --secutity-opt="apparmor:PROFILE"  : Set the apparmor profile to be applied 
                                          to the container
 
-If you want to use the same label for multiple containers, you can override use
-the security-opt flag to select an MCS level.  This is a common practice for MLS
-systems.  But it also might help in cases where you want to share the same 
-content between containers. Run the following command.
+You can override the default labeling scheme for each container by specifying
+the `--security-opt` flag. For example, you can specify the MCS/MLS level, a
+requirement for MLS systems. Specifying the level in the following command
+allows you to share the same content between containers.
 
     # docker run --security-opt label:level:s0:c100,c200 -i -t fedora bash
 
-Run the following command if you want to disable the labeling controls for just 
-this container.
+An MLS example might be:
+
+    # docker run --security-opt label:level:TopSecret -i -t rhel7 bash
+
+To disable the security labeling for this container versus running with the
+`--permissive` flag, use the following command:
 
     # docker run --security-opt label:disable -i -t fedora bash
 
-Run the following command if you want to run a container that could only listen
-on apache ports.
+If you want a tighter security policy on the processes within a container,
+you can specify an alternate type for the container. You could run a container
+that is only allowed to listen on Apache ports by executing the following
+command:
 
-    # docker run --security-opt label:type:svirt_apache_t -i -t fedora bash
+    # docker run --security-opt label:type:svirt_apache_t -i -t centos bash
+
+Note:
+
+You would have to write policy defining a `svirt_apache_t` type.
 
 ## Runtime Constraints on CPU and Memory
 
@@ -297,6 +307,26 @@ the `--device` flag. It allows you to specify one or more devices that
 will be accessible within the container.
 
     $ sudo docker run --device=/dev/snd:/dev/snd ...
+
+By default, the container will be able to `read`, `write`, and `mknod` these devices.
+This can be overridden using a third `:rwm` set of options to each `--device` flag:
+
+
+```
+	$ sudo docker run --device=/dev/sda:/dev/xvdc --rm -it ubuntu fdisk  /dev/xvdc
+
+	Command (m for help): q
+	$ sudo docker run --device=/dev/sda:/dev/xvdc:r --rm -it ubuntu fdisk  /dev/xvdc
+	You will not be able to write the partition table.
+
+	Command (m for help): q
+
+	$ sudo docker run --device=/dev/sda:/dev/xvdc:w --rm -it ubuntu fdisk  /dev/xvdc
+        crash....
+
+	$ sudo docker run --device=/dev/sda:/dev/xvdc:m --rm -it ubuntu fdisk  /dev/xvdc
+	fdisk: unable to open /dev/xvdc: Operation not permitted
+```
 
 In addition to `--privileged`, the operator can have fine grain control over the
 capabilities using `--cap-add` and `--cap-drop`. By default, Docker has a default
@@ -418,9 +448,48 @@ client container to help indicate which interface and port to use.
 
 ## ENV (Environment Variables)
 
-The operator can **set any environment variable** in the container by
-using one or more `-e` flags, even overriding those already defined by
-the developer with a Dockerfile `ENV`:
+When a new container is created, Docker will set the following environment
+variables automatically:
+
+<table width=100%>
+ <tr style="background-color:#C0C0C0">
+  <td> <b>Variable</b> </td>
+  <td style="padding-left:10px"> <b>Value</b> </td>
+ </tr>
+ <tr>
+  <td> <code>HOME</code> </td>
+  <td style="padding-left:10px">
+    Set based on the value of <code>USER</code>
+  </td>
+ </tr>
+ <tr style="background-color:#E8E8E8">
+  <td valign=top> <code>HOSTNAME</code> </td>
+  <td style="padding-left:10px"> 
+    The hostname associated with the container
+  </td>
+ </tr>
+ <tr>
+  <td valign=top> <code>PATH</code> </td>
+  <td style="padding-left:10px"> 
+    Includes popular directories, such as :<br>
+    <code>/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin</code>
+  </td>
+ <tr style="background-color:#E8E8E8">
+  <td valign=top> <code>TERM</code> </td>
+  <td style="padding-left:10px"> 
+    <code>xterm</code> if the container is allocated a psuedo-TTY 
+  </td>
+ </tr>
+</table>
+
+The container may also include environment variables defined
+as a result of the container being linked with another container. See
+the [*Container Links*](/userguide/dockerlinks/#container-linking)
+section for more details.
+
+Additionally, the operator can **set any environment variable** in the 
+container by using one or more `-e` flags, even overriding those mentioned 
+above, or already defined by the developer with a Dockerfile `ENV`:
 
     $ sudo docker run -e "deep=purple" --rm ubuntu /bin/bash -c export
     declare -x HOME="/"
