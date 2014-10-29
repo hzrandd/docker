@@ -254,7 +254,8 @@ func sockRequest(method, endpoint string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("received status != 200 OK: %s", resp.Status)
+		body, _ := ioutil.ReadAll(resp.Body)
+		return body, fmt.Errorf("received status != 200 OK: %s", resp.Status)
 	}
 
 	return ioutil.ReadAll(resp.Body)
@@ -501,6 +502,16 @@ func inspectField(name, field string) (string, error) {
 
 func inspectFieldJSON(name, field string) (string, error) {
 	format := fmt.Sprintf("{{json .%s}}", field)
+	inspectCmd := exec.Command(dockerBinary, "inspect", "-f", format, name)
+	out, exitCode, err := runCommandWithOutput(inspectCmd)
+	if err != nil || exitCode != 0 {
+		return "", fmt.Errorf("failed to inspect %s: %s", name, out)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func inspectFieldMap(name, path, field string) (string, error) {
+	format := fmt.Sprintf("{{index .%s %q}}", path, field)
 	inspectCmd := exec.Command(dockerBinary, "inspect", "-f", format, name)
 	out, exitCode, err := runCommandWithOutput(inspectCmd)
 	if err != nil || exitCode != 0 {

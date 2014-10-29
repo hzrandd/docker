@@ -1611,7 +1611,7 @@ func TestRunCopyVolumeContent(t *testing.T) {
 	}
 
 	// Test that the content is copied from the image to the volume
-	cmd := exec.Command(dockerBinary, "run", "--rm", "-v", "/hello", name, "sh", "-c", "find", "/hello")
+	cmd := exec.Command(dockerBinary, "run", "--rm", "-v", "/hello", name, "find", "/hello")
 	out, _, err := runCommandWithOutput(cmd)
 	if err != nil {
 		t.Fatal(err, out)
@@ -2266,7 +2266,7 @@ func TestRunRedirectStdout(t *testing.T) {
 		}()
 
 		select {
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("command timeout")
 		case <-ch:
 		}
@@ -2395,4 +2395,54 @@ func TestRunNoOutputFromPullInStdout(t *testing.T) {
 		t.Fatalf("Stdout contains output from pull: %s", stdout)
 	}
 	logDone("run - no output from pull in stdout")
+}
+
+func TestRunVolumesCleanPaths(t *testing.T) {
+	defer deleteAllContainers()
+
+	if _, err := buildImage("run_volumes_clean_paths",
+		`FROM busybox
+		 VOLUME /foo/`,
+		true); err != nil {
+		t.Fatal(err)
+	}
+	defer deleteImages("run_volumes_clean_paths")
+
+	cmd := exec.Command(dockerBinary, "run", "-v", "/foo", "-v", "/bar/", "--name", "dark_helmet", "run_volumes_clean_paths")
+	if out, _, err := runCommandWithOutput(cmd); err != nil {
+		t.Fatal(err, out)
+	}
+
+	out, err := inspectFieldMap("dark_helmet", "Volumes", "/foo/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "<no value>" {
+		t.Fatalf("Found unexpected volume entry for '/foo/' in volumes\n%q", out)
+	}
+
+	out, err = inspectFieldMap("dark_helmet", "Volumes", "/foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, volumesStoragePath) {
+		t.Fatalf("Volume was not defined for /foo\n%q", out)
+	}
+
+	out, err = inspectFieldMap("dark_helmet", "Volumes", "/bar/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "<no value>" {
+		t.Fatalf("Found unexpected volume entry for '/bar/' in volumes\n%q", out)
+	}
+	out, err = inspectFieldMap("dark_helmet", "Volumes", "/bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, volumesStoragePath) {
+		t.Fatalf("Volume was not defined for /bar\n%q", out)
+	}
+
+	logDone("run - volume paths are cleaned")
 }
