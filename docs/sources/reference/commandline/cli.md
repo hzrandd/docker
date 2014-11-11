@@ -70,6 +70,7 @@ expect an integer, and they can only be specified once.
       -g, --graph="/var/lib/docker"              Path to use as the root of the Docker runtime
       -H, --host=[]                              The socket(s) to bind to in daemon mode or connect to in client mode, specified using one or more tcp://host:port, unix:///path/to/socket, fd://* or fd://socketfd.
       --icc=true                                 Enable inter-container communication
+      --insecure-registry=[]                     Enable insecure communication with specified registries (no certificate verification for HTTPS and enable HTTP fallback)
       --ip=0.0.0.0                               Default IP address to use when binding container ports
       --ip-forward=true                          Enable net.ipv4.ip_forward
       --ip-masq=true                             Enable IP masquerading for bridge's IP range
@@ -111,9 +112,14 @@ direct access to the Docker daemon - and should be secured either using the
 [built in https encrypted socket](/articles/https/), or by putting a secure web
 proxy in front of it. You can listen on port `2375` on all network interfaces
 with `-H tcp://0.0.0.0:2375`, or on a particular network interface using its IP
-address: `-H tcp://192.168.59.103:2375`.
+address: `-H tcp://192.168.59.103:2375`. It is conventional to use port `2375`
+for un-encrypted, and port `2376` for encrypted communication with the daemon.
 
-On Systemd based systems, you can communicate with the daemon via 
+> **Note** If you're using an HTTPS encrypted socket, keep in mind that only TLS1.0
+> and greater are supported. Protocols SSLv3 and under are not supported anymore
+> for security reasons.
+
+On Systemd based systems, you can communicate with the daemon via
 [systemd socket activation](http://0pointer.de/blog/projects/socket-activation.html), use
 `docker -d -H fd://`. Using `fd://` will work perfectly for most setups but
 you can also specify individual sockets: `docker -d -H fd://3`. If the
@@ -193,6 +199,16 @@ IP masquerading uses address translation to allow containers without a public IP
 to other machines on the Internet. This may interfere with some network topologies and
 can be disabled with --ip-masq=false.
 
+
+By default, Docker will assume all registries are secured via TLS with certificate verification
+enabled. Prior versions of Docker used an auto fallback if a registry did not support TLS
+(or if the TLS connection failed). This introduced the opportunity for Man In The Middle (MITM)
+attacks, so as of Docker 1.3.1, the user must now specify the `--insecure-registry` daemon flag
+for each insecure registry. An insecure registry is either not using TLS (i.e. plain text HTTP),
+or is using TLS with a CA certificate not known by the Docker daemon (i.e. certification
+verification disabled). For example, if there is a registry listening for HTTP at 127.0.0.1:5000,
+as of Docker 1.3.1 you are required to specify `--insecure-registry 127.0.0.1:5000` when starting
+the Docker daemon.
 
 
 Docker supports softlinks for the Docker data directory
@@ -489,17 +505,18 @@ Creates a new container.
       --cpuset=""                CPUs in which to allow execution (0-3, 0,1)
       --device=[]                Add a host device to the container (e.g. --device=/dev/sdc:/dev/xvdc:rwm)
       --dns=[]                   Set custom DNS servers
-      --dns-search=[]            Set custom DNS search domains
+      --dns-search=[]            Set custom DNS search domains (Use --dns-search=. if you don't wish to set the search domain)
       -e, --env=[]               Set environment variables
       --entrypoint=""            Overwrite the default ENTRYPOINT of the image
       --env-file=[]              Read in a line delimited file of environment variables
-      --expose=[]                Expose a port from the container without publishing it to your host
+      --expose=[]                Expose a port or a range of ports (e.g. --expose=3300-3310) from the container without publishing it to your host
       -h, --hostname=""          Container host name
       -i, --interactive=false    Keep STDIN open even if not attached
       --link=[]                  Add link to another container in the form of name:alias
       --lxc-conf=[]              (lxc exec-driver only) Add custom lxc options --lxc-conf="lxc.cgroup.cpuset.cpus = 0,1"
       -m, --memory=""            Memory limit (format: <number><optional unit>, where unit = b, k, m or g)
       --name=""                  Assign a name to the container
+      --mac-address=""           Set the container's MAC address
       --net="bridge"             Set the Network mode for the container
                                    'bridge': creates a new network stack for the container on the docker bridge
                                    'none': no networking for this container
@@ -621,7 +638,7 @@ You'll need two shells for this example.
 
     Usage: docker exec [OPTIONS] CONTAINER COMMAND [ARG...]
 
-    Run a command in an existing container
+    Run a command in a running container
 
       -d, --detach=false         Detached mode: run command in the background
       -i, --interactive=false    Keep STDIN open even if not attached
@@ -851,6 +868,13 @@ straightforward manner.
 
     $ sudo docker inspect --format='{{.NetworkSettings.IPAddress}}' $INSTANCE_ID
 
+**Get an instance's MAC Address:**
+
+For the most part, you can pick out any field from the JSON in a fairly
+straightforward manner.
+
+    $ sudo docker inspect --format='{{.NetworkSettings.MacAddress}}' $INSTANCE_ID
+
 **List All Port Bindings:**
 
 One can loop over arrays and maps in the results to produce simple text
@@ -999,7 +1023,7 @@ used, which is observable by the process being suspended. With the cgroups freez
 the process is unaware, and unable to capture, that it is being suspended,
 and subsequently resumed.
 
-See the 
+See the
 [cgroups freezer documentation](https://www.kernel.org/doc/Documentation/cgroups/freezer-subsystem.txt)
 for further details.
 
@@ -1038,6 +1062,7 @@ than one filter, then pass multiple flags (e.g. `--filter "foo=bar" --filter "bi
 
 Current filters:
  * exited (int - the code of exited containers. Only useful with '--all')
+ * status (restarting|running|paused|exited)
 
 ##### Successfully exited containers
 
@@ -1191,11 +1216,11 @@ removed before the image is removed.
       -d, --detach=false         Detached mode: run the container in the background and print the new container ID
       --device=[]                Add a host device to the container (e.g. --device=/dev/sdc:/dev/xvdc:rwm)
       --dns=[]                   Set custom DNS servers
-      --dns-search=[]            Set custom DNS search domains
+      --dns-search=[]            Set custom DNS search domains (Use --dns-search=. if you don't wish to set the search domain)
       -e, --env=[]               Set environment variables
       --entrypoint=""            Overwrite the default ENTRYPOINT of the image
       --env-file=[]              Read in a line delimited file of environment variables
-      --expose=[]                Expose a port from the container without publishing it to your host
+      --expose=[]                Expose a port or a range of ports (e.g. --expose=3300-3310) from the container without publishing it to your host
       -h, --hostname=""          Container host name
       -i, --interactive=false    Keep STDIN open even if not attached
       --link=[]                  Add link to another container in the form of name:alias
@@ -1579,7 +1604,7 @@ them to [*Share Images via Repositories*](
 The `docker unpause` command uses the cgroups freezer to un-suspend all
 processes in a container.
 
-See the 
+See the
 [cgroups freezer documentation](https://www.kernel.org/doc/Documentation/cgroups/freezer-subsystem.txt)
 for further details.
 

@@ -13,11 +13,13 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/docker/docker/nat"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/networkfs/resolvconf"
 	"github.com/kr/pty"
@@ -2016,6 +2018,41 @@ func TestRunNetworkNotInitializedNoneMode(t *testing.T) {
 	logDone("run - network must not be initialized in 'none' mode")
 }
 
+func TestRunSetMacAddress(t *testing.T) {
+	mac := "12:34:56:78:9a:bc"
+	cmd := exec.Command("/bin/bash", "-c", dockerBinary+` run -i --rm --mac-address=`+mac+` busybox /bin/sh -c "ip link show eth0 | tail -1 | awk '{ print \$2 }'"`)
+	out, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualMac := strings.TrimSpace(out)
+	if actualMac != mac {
+		t.Fatalf("Set MAC address with --mac-address failed. The container has an incorrect MAC address: %q, expected: %q", actualMac, mac)
+	}
+
+	deleteAllContainers()
+	logDone("run - setting MAC address with --mac-address")
+}
+
+func TestRunInspectMacAddress(t *testing.T) {
+	mac := "12:34:56:78:9a:bc"
+	cmd := exec.Command(dockerBinary, "run", "-d", "--mac-address="+mac, "busybox", "top")
+	out, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.TrimSpace(out)
+	inspectedMac, err := inspectField(id, "NetworkSettings.MacAddress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspectedMac != mac {
+		t.Fatalf("docker inspect outputs wrong MAC address: %q, should be: %q", inspectedMac, mac)
+	}
+	deleteAllContainers()
+	logDone("run - inspecting MAC address")
+}
+
 func TestRunDeallocatePortOnMissingIptablesRule(t *testing.T) {
 	cmd := exec.Command(dockerBinary, "run", "-d", "-p", "23:23", "busybox", "top")
 	out, _, err := runCommandWithOutput(cmd)
@@ -2445,4 +2482,89 @@ func TestRunVolumesCleanPaths(t *testing.T) {
 	}
 
 	logDone("run - volume paths are cleaned")
+}
+
+// Regression test for #3631
+func TestRunSlowStdoutConsumer(t *testing.T) {
+	defer deleteAllContainers()
+
+	c := exec.Command("/bin/bash", "-c", dockerBinary+` run --rm -i busybox /bin/sh -c "dd if=/dev/zero of=/foo bs=1024 count=2000 &>/dev/null; catv /foo"`)
+
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	n, err := consumeWithSpeed(stdout, 10000, 5*time.Millisecond, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := 2 * 1024 * 2000
+	if n != expected {
+		t.Fatalf("Expected %d, got %d", expected, n)
+	}
+
+	logDone("run - slow consumer")
+}
+
+func TestRunAllowPortRangeThroughExpose(t *testing.T) {
+	cmd := exec.Command(dockerBinary, "run", "-d", "--expose", "3000-3003", "-P", "busybox", "top")
+	out, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.TrimSpace(out)
+	portstr, err := inspectFieldJSON(id, "NetworkSettings.Ports")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ports nat.PortMap
+	err = unmarshalJSON([]byte(portstr), &ports)
+	for port, binding := range ports {
+		portnum, _ := strconv.Atoi(strings.Split(string(port), "/")[0])
+		if portnum < 3000 || portnum > 3003 {
+			t.Fatalf("Port is out of range ", portnum, binding, out)
+		}
+		if binding == nil || len(binding) != 1 || len(binding[0].HostPort) == 0 {
+			t.Fatal("Port is not mapped for the port "+port, out)
+		}
+	}
+	if err := deleteContainer(id); err != nil {
+		t.Fatal(err)
+	}
+	logDone("run - allow port range through --expose flag")
+}
+
+func TestRunUnknownCommand(t *testing.T) {
+	defer deleteAllContainers()
+	runCmd := exec.Command(dockerBinary, "create", "busybox", "/bin/nada")
+	cID, _, _, err := runCommandWithStdoutStderr(runCmd)
+	if err != nil {
+		t.Fatalf("Failed to create container: %v, output: %q", err, cID)
+	}
+	cID = strings.TrimSpace(cID)
+
+	runCmd = exec.Command(dockerBinary, "start", cID)
+	_, _, _, err = runCommandWithStdoutStderr(runCmd)
+	if err == nil {
+		t.Fatalf("Container should not have been able to start!")
+	}
+
+	runCmd = exec.Command(dockerBinary, "inspect", "--format={{.State.ExitCode}}", cID)
+	rc, _, _, err2 := runCommandWithStdoutStderr(runCmd)
+	rc = strings.TrimSpace(rc)
+
+	if err2 != nil {
+		t.Fatalf("Error getting status of container: %v", err2)
+	}
+
+	if rc != "-1" {
+		t.Fatalf("ExitCode(%v) was supposed to be -1", rc)
+	}
+
+	logDone("run - Unknown Command")
 }

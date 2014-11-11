@@ -13,7 +13,7 @@ import (
 	"github.com/docker/docker/api/client"
 	"github.com/docker/docker/dockerversion"
 	flag "github.com/docker/docker/pkg/mflag"
-	"github.com/docker/docker/reexec"
+	"github.com/docker/docker/pkg/reexec"
 	"github.com/docker/docker/utils"
 )
 
@@ -109,7 +109,7 @@ func main() {
 	if err := cli.Cmd(flag.Args()...); err != nil {
 		if sterr, ok := err.(*utils.StatusError); ok {
 			if sterr.Status != "" {
-				log.Println("%s", sterr.Status)
+				log.Println(sterr.Status)
 			}
 			os.Exit(sterr.StatusCode)
 		}

@@ -153,7 +153,15 @@ func (compression *Compression) Extension() string {
 	return ""
 }
 
-func addTarFile(path, name string, tw *tar.Writer, twBuf *bufio.Writer) error {
+type tarAppender struct {
+	TarWriter *tar.Writer
+	Buffer    *bufio.Writer
+
+	// for hardlink mapping
+	SeenFiles map[uint64]string
+}
+
+func (ta *tarAppender) addTarFile(path, name string) error {
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -177,15 +185,32 @@ func addTarFile(path, name string, tw *tar.Writer, twBuf *bufio.Writer) error {
 
 	hdr.Name = name
 
-	stat, ok := fi.Sys().(*syscall.Stat_t)
-	if ok {
+	var (
+		nlink uint32
+		inode uint64
+	)
+	if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
+		nlink = uint32(stat.Nlink)
+		inode = uint64(stat.Ino)
 		// Currently go does not fill in the major/minors
 		if stat.Mode&syscall.S_IFBLK == syscall.S_IFBLK ||
 			stat.Mode&syscall.S_IFCHR == syscall.S_IFCHR {
 			hdr.Devmajor = int64(major(uint64(stat.Rdev)))
 			hdr.Devminor = int64(minor(uint64(stat.Rdev)))
 		}
-
+	}
+	// if it's a regular file and has more than 1 link,
+	// it's hardlinked, so set the type flag accordingly
+	if fi.Mode().IsRegular() && nlink > 1 {
+		// a link should have a name that it links too
+		// and that linked name should be first in the tar archive
+		if oldpath, ok := ta.SeenFiles[inode]; ok {
+			hdr.Typeflag = tar.TypeLink
+			hdr.Linkname = oldpath
+			hdr.Size = 0 // This Must be here for the writer math to add up!
+		} else {
+			ta.SeenFiles[inode] = name
+		}
 	}
 
 	capability, _ := system.Lgetxattr(path, "security.capability")
@@ -194,7 +219,7 @@ func addTarFile(path, name string, tw *tar.Writer, twBuf *bufio.Writer) error {
 		hdr.Xattrs["security.capability"] = string(capability)
 	}
 
-	if err := tw.WriteHeader(hdr); err != nil {
+	if err := ta.TarWriter.WriteHeader(hdr); err != nil {
 		return err
 	}
 
@@ -204,17 +229,17 @@ func addTarFile(path, name string, tw *tar.Writer, twBuf *bufio.Writer) error {
 			return err
 		}
 
-		twBuf.Reset(tw)
-		_, err = io.Copy(twBuf, file)
+		ta.Buffer.Reset(ta.TarWriter)
+		defer ta.Buffer.Reset(nil)
+		_, err = io.Copy(ta.Buffer, file)
 		file.Close()
 		if err != nil {
 			return err
 		}
-		err = twBuf.Flush()
+		err = ta.Buffer.Flush()
 		if err != nil {
 			return err
 		}
-		twBuf.Reset(nil)
 	}
 
 	return nil
@@ -345,9 +370,15 @@ func TarWithOptions(srcPath string, options *TarOptions) (io.ReadCloser, error) 
 		return nil, err
 	}
 
-	tw := tar.NewWriter(compressWriter)
-
 	go func() {
+		ta := &tarAppender{
+			TarWriter: tar.NewWriter(compressWriter),
+			Buffer:    pools.BufioWriter32KPool.Get(nil),
+			SeenFiles: make(map[uint64]string),
+		}
+		// this buffer is needed for the duration of this piped stream
+		defer pools.BufioWriter32KPool.Put(ta.Buffer)
+
 		// In general we log errors here but ignore them because
 		// during e.g. a diff operation the container can continue
 		// mutating the filesystem and we can see transient errors
@@ -356,9 +387,6 @@ func TarWithOptions(srcPath string, options *TarOptions) (io.ReadCloser, error) 
 		if options.Includes == nil {
 			options.Includes = []string{"."}
 		}
-
-		twBuf := pools.BufioWriter32KPool.Get(nil)
-		defer pools.BufioWriter32KPool.Put(twBuf)
 
 		var renamedRelFilePath string // For when tar.Options.Name is set
 		for _, include := range options.Includes {
@@ -369,7 +397,9 @@ func TarWithOptions(srcPath string, options *TarOptions) (io.ReadCloser, error) 
 				}
 
 				relFilePath, err := filepath.Rel(srcPath, filePath)
-				if err != nil {
+				if err != nil || (relFilePath == "." && f.IsDir()) {
+					// Error getting relative path OR we are looking
+					// at the root path. Skip in both situations.
 					return nil
 				}
 
@@ -395,7 +425,7 @@ func TarWithOptions(srcPath string, options *TarOptions) (io.ReadCloser, error) 
 					relFilePath = strings.Replace(relFilePath, renamedRelFilePath, options.Name, 1)
 				}
 
-				if err := addTarFile(filePath, relFilePath, tw, twBuf); err != nil {
+				if err := ta.addTarFile(filePath, relFilePath); err != nil {
 					log.Debugf("Can't add file %s to tar: %s", srcPath, err)
 				}
 				return nil
@@ -403,7 +433,7 @@ func TarWithOptions(srcPath string, options *TarOptions) (io.ReadCloser, error) 
 		}
 
 		// Make sure to check the error on Close.
-		if err := tw.Close(); err != nil {
+		if err := ta.TarWriter.Close(); err != nil {
 			log.Debugf("Can't close tar writer: %s", err)
 		}
 		if err := compressWriter.Close(); err != nil {

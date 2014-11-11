@@ -117,7 +117,7 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 		root := cmd.Arg(0)
 		if utils.IsGIT(root) {
 			remoteURL := cmd.Arg(0)
-			if !strings.HasPrefix(remoteURL, "git://") && !strings.HasPrefix(remoteURL, "git@") && !utils.IsURL(remoteURL) {
+			if !utils.ValidGitTransport(remoteURL) {
 				remoteURL = "https://" + remoteURL
 			}
 
@@ -144,6 +144,11 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 			return fmt.Errorf("Error reading .dockerignore: '%s'", err)
 		}
 		for _, pattern := range strings.Split(string(ignore), "\n") {
+			pattern = strings.TrimSpace(pattern)
+			if pattern == "" {
+				continue
+			}
+			pattern = filepath.Clean(pattern)
 			ok, err := filepath.Match(pattern, "Dockerfile")
 			if err != nil {
 				return fmt.Errorf("Bad .dockerignore pattern: '%s', error: %s", pattern, err)
@@ -622,6 +627,8 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 		return nil
 	}
 
+	hijacked := make(chan io.Closer)
+
 	if *attach || *openStdin {
 		if cmd.NArg() > 1 {
 			return fmt.Errorf("You cannot start and attach multiple containers at once.")
@@ -658,8 +665,24 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 		v.Set("stderr", "1")
 
 		cErr = promise.Go(func() error {
-			return cli.hijack("POST", "/containers/"+cmd.Arg(0)+"/attach?"+v.Encode(), tty, in, cli.out, cli.err, nil, nil)
+			return cli.hijack("POST", "/containers/"+cmd.Arg(0)+"/attach?"+v.Encode(), tty, in, cli.out, cli.err, hijacked, nil)
 		})
+	} else {
+		close(hijacked)
+	}
+
+	// Acknowledge the hijack before starting
+	select {
+	case closer := <-hijacked:
+		// Make sure that the hijack gets closed when returning (results
+		// in closing the hijack chan and freeing server's goroutines)
+		if closer != nil {
+			defer closer.Close()
+		}
+	case err := <-cErr:
+		if err != nil {
+			return err
+		}
 	}
 
 	var encounteredError error
@@ -2470,7 +2493,7 @@ func (cli *DockerCli) CmdLoad(args ...string) error {
 }
 
 func (cli *DockerCli) CmdExec(args ...string) error {
-	cmd := cli.Subcmd("exec", "CONTAINER COMMAND [ARG...]", "Run a command in an existing container")
+	cmd := cli.Subcmd("exec", "CONTAINER COMMAND [ARG...]", "Run a command in a running container")
 
 	execConfig, err := runconfig.ParseExec(cmd, args)
 	if err != nil {

@@ -721,8 +721,7 @@ func NewDaemon(config *Config, eng *engine.Engine) (*Daemon, error) {
 func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error) {
 	// Apply configuration defaults
 	if config.Mtu == 0 {
-		// FIXME: GetDefaultNetwork Mtu doesn't need to be public anymore
-		config.Mtu = GetDefaultNetworkMtu()
+		config.Mtu = getDefaultNetworkMtu()
 	}
 	// Check for mutually incompatible config options
 	if config.BridgeIface != "" && config.BridgeIP != "" {
@@ -832,7 +831,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	}
 
 	log.Debugf("Creating repository list")
-	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), g, config.Mirrors)
+	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), g, config.Mirrors, config.InsecureRegistries)
 	if err != nil {
 		return nil, fmt.Errorf("Couldn't create Tag store: %s", err)
 	}
@@ -970,6 +969,7 @@ func (daemon *Daemon) Mount(container *Container) error {
 	if container.basefs == "" {
 		container.basefs = dir
 	} else if container.basefs != dir {
+		daemon.driver.Put(container.ID)
 		return fmt.Errorf("Error: driver %s is returning inconsistent paths for container %s ('%s' then '%s')",
 			daemon.driver, container.ID, container.basefs, dir)
 	}

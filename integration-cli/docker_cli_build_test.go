@@ -7,9 +7,11 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -218,7 +220,7 @@ func TestBuildEnvironmentReplacementEnv(t *testing.T) {
 		if parts[0] == "bar" {
 			found = true
 			if parts[1] != "foo" {
-				t.Fatal("Could not find replaced var for env `bar`: got %q instead of `foo`", parts[1])
+				t.Fatalf("Could not find replaced var for env `bar`: got %q instead of `foo`", parts[1])
 			}
 		}
 	}
@@ -1224,7 +1226,7 @@ func TestBuildCopyDisallowRemote(t *testing.T) {
 COPY https://index.docker.io/robots.txt /`,
 		true)
 	if err == nil || !strings.Contains(out, "Source can't be a URL for COPY") {
-		t.Fatal("Error should be about disallowed remote source, got err: %s, out: %q", err, out)
+		t.Fatalf("Error should be about disallowed remote source, got err: %s, out: %q", err, out)
 	}
 	logDone("build - copy - disallow copy from remote")
 }
@@ -1374,7 +1376,7 @@ func TestBuildForceRm(t *testing.T) {
 	buildCmd := exec.Command(dockerBinary, "build", "-t", name, "--force-rm", ".")
 	buildCmd.Dir = ctx.Dir
 	if out, _, err := runCommandWithOutput(buildCmd); err == nil {
-		t.Fatal("failed to build the image: %s, %v", out, err)
+		t.Fatalf("failed to build the image: %s, %v", out, err)
 	}
 
 	containerCountAfter, err := getContainerCount()
@@ -2214,6 +2216,64 @@ func TestBuildADDRemoteFileWithoutCache(t *testing.T) {
 	logDone("build - add remote file without cache")
 }
 
+func TestBuildADDRemoteFileMTime(t *testing.T) {
+	name := "testbuildaddremotefilemtime"
+	defer deleteImages(name)
+
+	server, err := fakeStorage(map[string]string{"baz": "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	ctx, err := fakeContext(fmt.Sprintf(`FROM scratch
+        MAINTAINER dockerio
+        ADD %s/baz /usr/lib/baz/quux`, server.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+
+	id1, err := buildImageFromContext(name, ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id2, err := buildImageFromContext(name, ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 != id2 {
+		t.Fatal("The cache should have been used but wasn't - #1")
+	}
+
+	// Now set baz's times to anything else and redo the build
+	// This time the cache should not be used
+	bazPath := path.Join(server.FakeContext.Dir, "baz")
+	err = syscall.UtimesNano(bazPath, make([]syscall.Timespec, 2))
+	if err != nil {
+		t.Fatalf("Error setting mtime on %q: %v", bazPath, err)
+	}
+
+	id3, err := buildImageFromContext(name, ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id1 == id3 {
+		t.Fatal("The cache should not have been used but was")
+	}
+
+	// And for good measure do it again and make sure cache is used this time
+	id4, err := buildImageFromContext(name, ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id3 != id4 {
+		t.Fatal("The cache should have been used but wasn't - #2")
+	}
+	logDone("build - add remote file testing mtime")
+}
+
 func TestBuildADDLocalAndRemoteFilesWithCache(t *testing.T) {
 	name := "testbuildaddlocalandremotefilewithcache"
 	defer deleteImages(name)
@@ -2669,6 +2729,29 @@ func TestBuildDockerignore(t *testing.T) {
 	logDone("build - test .dockerignore")
 }
 
+func TestBuildDockerignoreCleanPaths(t *testing.T) {
+	name := "testbuilddockerignorecleanpaths"
+	defer deleteImages(name)
+	dockerfile := `
+        FROM busybox
+        ADD . /tmp/
+        RUN (! ls /tmp/foo) && (! ls /tmp/foo2) && (! ls /tmp/dir1/foo)`
+	ctx, err := fakeContext(dockerfile, map[string]string{
+		"foo":           "foo",
+		"foo2":          "foo2",
+		"dir1/foo":      "foo in dir1",
+		".dockerignore": "./foo\ndir1//foo\n./dir1/../foo2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	logDone("build - test .dockerignore with clean paths")
+}
+
 func TestBuildDockerignoringDockerfile(t *testing.T) {
 	name := "testbuilddockerignoredockerfile"
 	defer deleteImages(name)
@@ -2678,13 +2761,20 @@ func TestBuildDockerignoringDockerfile(t *testing.T) {
 		"Dockerfile":    "FROM scratch",
 		".dockerignore": "Dockerfile\n",
 	})
-	defer ctx.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer ctx.Close()
 	if _, err = buildImageFromContext(name, ctx, true); err == nil {
 		t.Fatalf("Didn't get expected error from ignoring Dockerfile")
 	}
+
+	// now try it with ./Dockerfile
+	ctx.Add(".dockerignore", "./Dockerfile\n")
+	if _, err = buildImageFromContext(name, ctx, true); err == nil {
+		t.Fatalf("Didn't get expected error from ignoring ./Dockerfile")
+	}
+
 	logDone("build - test .dockerignore of Dockerfile")
 }
 
@@ -3151,7 +3241,7 @@ func TestBuildEntrypointInheritance(t *testing.T) {
 	status, _ = runCommand(exec.Command(dockerBinary, "run", "child"))
 
 	if status != 5 {
-		t.Fatal("expected exit code 5 but received %d", status)
+		t.Fatalf("expected exit code 5 but received %d", status)
 	}
 
 	logDone("build - clear entrypoint")

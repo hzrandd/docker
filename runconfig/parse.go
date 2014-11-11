@@ -59,6 +59,7 @@ func Parse(cmd *flag.FlagSet, args []string, sysInfo *sysinfo.SysInfo) (*Config,
 		flCpuShares       = cmd.Int64([]string{"c", "-cpu-shares"}, 0, "CPU shares (relative weight)")
 		flCpuset          = cmd.String([]string{"-cpuset"}, "", "CPUs in which to allow execution (0-3, 0,1)")
 		flNetMode         = cmd.String([]string{"-net"}, "bridge", "Set the Network mode for the container\n'bridge': creates a new network stack for the container on the docker bridge\n'none': no networking for this container\n'container:<name|id>': reuses another container network stack\n'host': use the host network stack inside the container.  Note: the host mode gives the container full access to local system services such as D-bus and is therefore considered insecure.")
+		flMacAddress      = cmd.String([]string{"-mac-address"}, "", "Container MAC address (e.g. 92:d0:c6:0a:29:33)")
 		flRestartPolicy   = cmd.String([]string{"-restart"}, "", "Restart policy to apply when a container exits (no, on-failure[:max-retry], always)")
 	)
 
@@ -71,9 +72,9 @@ func Parse(cmd *flag.FlagSet, args []string, sysInfo *sysinfo.SysInfo) (*Config,
 	cmd.Var(&flEnvFile, []string{"-env-file"}, "Read in a line delimited file of environment variables")
 
 	cmd.Var(&flPublish, []string{"p", "-publish"}, fmt.Sprintf("Publish a container's port to the host\nformat: %s\n(use 'docker port' to see the actual mapping)", nat.PortSpecTemplateFormat))
-	cmd.Var(&flExpose, []string{"#expose", "-expose"}, "Expose a port from the container without publishing it to your host")
+	cmd.Var(&flExpose, []string{"#expose", "-expose"}, "Expose a port or a range of ports (e.g. --expose=3300-3310) from the container without publishing it to your host")
 	cmd.Var(&flDns, []string{"#dns", "-dns"}, "Set custom DNS servers")
-	cmd.Var(&flDnsSearch, []string{"-dns-search"}, "Set custom DNS search domains")
+	cmd.Var(&flDnsSearch, []string{"-dns-search"}, "Set custom DNS search domains (Use --dns-search=. if you don't wish to set the search domain)")
 	cmd.Var(&flExtraHosts, []string{"-add-host"}, "Add a custom host-to-IP mapping (host:ip)")
 	cmd.Var(&flVolumesFrom, []string{"#volumes-from", "-volumes-from"}, "Mount volumes from the specified container(s)")
 	cmd.Var(&flLxcOpts, []string{"#lxc-conf", "-lxc-conf"}, "(lxc exec-driver only) Add custom lxc options --lxc-conf=\"lxc.cgroup.cpuset.cpus = 0,1\"")
@@ -197,9 +198,24 @@ func Parse(cmd *flag.FlagSet, args []string, sysInfo *sysinfo.SysInfo) (*Config,
 		if strings.Contains(e, ":") {
 			return nil, nil, cmd, fmt.Errorf("Invalid port format for --expose: %s", e)
 		}
-		p := nat.NewPort(nat.SplitProtoPort(e))
-		if _, exists := ports[p]; !exists {
-			ports[p] = struct{}{}
+		//support two formats for expose, original format <portnum>/[<proto>] or <startport-endport>/[<proto>]
+		if strings.Contains(e, "-") {
+			proto, port := nat.SplitProtoPort(e)
+			//parse the start and end port and create a sequence of ports to expose
+			parts := strings.Split(port, "-")
+			start, _ := strconv.Atoi(parts[0])
+			end, _ := strconv.Atoi(parts[1])
+			for i := start; i <= end; i++ {
+				p := nat.NewPort(proto, strconv.Itoa(i))
+				if _, exists := ports[p]; !exists {
+					ports[p] = struct{}{}
+				}
+			}
+		} else {
+			p := nat.NewPort(nat.SplitProtoPort(e))
+			if _, exists := ports[p]; !exists {
+				ports[p] = struct{}{}
+			}
 		}
 	}
 
@@ -254,6 +270,7 @@ func Parse(cmd *flag.FlagSet, args []string, sysInfo *sysinfo.SysInfo) (*Config,
 		Cmd:             runCmd,
 		Image:           image,
 		Volumes:         flVolumes.GetMap(),
+		MacAddress:      *flMacAddress,
 		Entrypoint:      entrypoint,
 		WorkingDir:      *flWorkingDir,
 		SecurityOpt:     flSecurityOpt.GetAll(),

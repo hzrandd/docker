@@ -238,9 +238,9 @@ commands using a base image that does not contain `/bin/sh`.
 > **Note**:
 > Unlike the *shell* form, the *exec* form does not invoke a command shell.
 > This means that normal shell processing does not happen. For example,
-> `CMD [ "echo", "$HOME" ]` will not do variable substitution on `$HOME`.
+> `RUN [ "echo", "$HOME" ]` will not do variable substitution on `$HOME`.
 > If you want shell processing then either use the *shell* form or execute 
-> a shell directly, for example: `CMD [ "sh", "-c", "echo", "$HOME" ]`.
+> a shell directly, for example: `RUN [ "sh", "-c", "echo", "$HOME" ]`.
 
 The cache for `RUN` instructions isn't invalidated automatically during
 the next build. The cache for an instruction like 
@@ -376,7 +376,11 @@ destination container.
 All new files and directories are created with a UID and GID of 0.
 
 In the case where `<src>` is a remote file URL, the destination will
-have permissions of 600.
+have permissions of 600. If the remote file being retrieved has an HTTP
+`Last-Modified` header, the timestamp from that header will be used
+to set the `mtime` on the destination file. Then, like any other file
+processed during an `ADD`, `mtime` will be included in the determination
+of whether or not the file has changed and the cache should be updated.
 
 > **Note**:
 > If you build by passing a `Dockerfile` through STDIN (`docker
@@ -731,7 +735,8 @@ documentation.
     USER daemon
 
 The `USER` instruction sets the user name or UID to use when running the image
-and for any following `RUN` directives.
+and for any `RUN`, `CMD` and `ENTRYPOINT` instructions that follow it in the
+`Dockerfile`.
 
 ## WORKDIR
 

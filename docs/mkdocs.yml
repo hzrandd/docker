@@ -17,7 +17,6 @@ use_absolute_urls: true
 # theme: docker
 theme_dir: ./theme/mkdocs/
 theme_center_lead: false
-include_search: true
 
 copyright: Copyright &copy; 2014, Docker, Inc.
 google_analytics: ['UA-6096819-11', 'docker.io']
@@ -26,6 +25,7 @@ pages:
 
 # Introduction:
 - ['index.md', 'About', 'Docker']
+- ['release-notes.md', 'About', 'Release Notes']
 - ['introduction/index.md', '**HIDDEN**']
 - ['introduction/understanding-docker.md', 'About', 'Understanding Docker']
 
@@ -148,3 +148,4 @@ pages:
 - ['contributing/index.md', '**HIDDEN**']
 - ['contributing/contributing.md', 'Contribute', 'Contributing']
 - ['contributing/devenvironment.md', 'Contribute', 'Development environment']
+- ['contributing/docs_style-guide.md', 'Contribute', 'Documentation style guide']
