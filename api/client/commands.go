@@ -31,6 +31,7 @@ import (
 	"github.com/docker/docker/nat"
 	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/pkg/figo"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/parsers/filters"
@@ -2585,6 +2586,37 @@ func (cli *DockerCli) CmdExec(args ...string) error {
 	if err := <-errCh; err != nil {
 		log.Debugf("Error hijack: %s", err)
 		return err
+	}
+
+	return nil
+}
+
+func (cli *DockerCli) CmdJob(args ...string) error {
+	cmd := cli.Subcmd("job", "ACTION YAML", "Operate batch of containers")
+	name := cmd.String([]string{"-name"}, "", "Project name")
+	noCache := cmd.Bool([]string{"#no-cache", "-no-cache"}, false, "Do not use cache when building the image")
+	if err := cmd.Parse(args); err != nil {
+		return nil
+	}
+
+	var (
+		action = cmd.Arg(0)
+		yaml   = cmd.Arg(1)
+	)
+
+	p, err := figo.Setup(*name, yaml)
+	if err != nil {
+		return err
+	}
+
+	switch action {
+	case "build":
+		if err = p.Build(nil, *noCache); err != nil {
+			return err
+		}
+		log.Infoln("Project has been built successfully!")
+	default:
+		cmd.Usage()
 	}
 
 	return nil
