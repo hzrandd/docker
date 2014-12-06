@@ -390,6 +390,38 @@ func (c *Client) stream(method, path string, setRawTerminal, rawJSONStream bool,
 	return nil
 }
 
+// APIImages represent an image returned in the ListImages call.
+type APIImages struct {
+	ID          string   `json:"Id" yaml:"Id"`
+	RepoTags    []string `json:"RepoTags,omitempty" yaml:"RepoTags,omitempty"`
+	Created     int64    `json:"Created,omitempty" yaml:"Created,omitempty"`
+	Size        int64    `json:"Size,omitempty" yaml:"Size,omitempty"`
+	VirtualSize int64    `json:"VirtualSize,omitempty" yaml:"VirtualSize,omitempty"`
+	ParentID    string   `json:"ParentId,omitempty" yaml:"ParentId,omitempty"`
+}
+
+// ListImages returns the list of available images in the server.
+//
+// See http://goo.gl/VmcR6v for more details.
+func (c *Client) ListImages(all bool) ([]APIImages, error) {
+	path := "/images/json?all="
+	if all {
+		path += "1"
+	} else {
+		path += "0"
+	}
+	body, _, err := c.do("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var images []APIImages
+	err = json.Unmarshal(body, &images)
+	if err != nil {
+		return nil, err
+	}
+	return images, nil
+}
+
 // BuildImage builds an image from a tarball's url or a Dockerfile in the input
 // stream.
 //
@@ -418,4 +450,140 @@ func (c *Client) BuildImage(opts BuildImageOptions) error {
 	}
 	return c.stream("POST", fmt.Sprintf("/build?%s",
 		queryString(&opts)), true, opts.RawJSONStream, headers, opts.InputStream, opts.OutputStream, nil)
+}
+
+// ContainerAlreadyRunning is the error returned when a given container is
+// already running.
+type ContainerAlreadyRunning struct {
+	ID string
+}
+
+func (err *ContainerAlreadyRunning) Error() string {
+	return "Container already running: " + err.ID
+}
+
+// ContainerNotRunning is the error returned when a given container is not
+// running.
+type ContainerNotRunning struct {
+	ID string
+}
+
+func (err *ContainerNotRunning) Error() string {
+	return "Container not running: " + err.ID
+}
+
+// StopContainer stops a container, killing it after the given timeout (in
+// seconds).
+//
+// See http://goo.gl/EbcpXt for more details.
+func (c *Client) StopContainer(id string, timeout uint) error {
+	path := fmt.Sprintf("/containers/%s/stop?t=%d", id, timeout)
+	_, status, err := c.do("POST", path, nil)
+	if status == http.StatusNotFound {
+		return &NoSuchContainer{ID: id}
+	}
+	if status == http.StatusNotModified {
+		return &ContainerNotRunning{ID: id}
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// CreateContainer creates a new container, returning the container instance,
+// or an error in case of failure.
+//
+// See http://goo.gl/mErxNp for more details.
+func (c *Client) CreateContainer(opts CreateContainerOptions) (*Container, error) {
+	path := "/containers/create?" + queryString(opts)
+	body, status, err := c.do("POST", path, struct {
+		*Config
+		HostConfig *HostConfig `json:"HostConfig,omitempty" yaml:"HostConfig,omitempty"`
+	}{
+		opts.Config,
+		opts.HostConfig,
+	})
+	if status == http.StatusNotFound {
+		return nil, ErrNoSuchImage
+	}
+	if err != nil {
+		return nil, err
+	}
+	var container Container
+	err = json.Unmarshal(body, &container)
+	if err != nil {
+		return nil, err
+	}
+	container.Name = opts.Name
+	return &container, nil
+}
+
+// StartContainer starts a container, returning an error in case of failure.
+//
+// See http://goo.gl/iM5GYs for more details.
+func (c *Client) StartContainer(id string, hostConfig *HostConfig) error {
+	if hostConfig == nil {
+		hostConfig = &HostConfig{}
+	}
+	path := "/containers/" + id + "/start"
+	_, status, err := c.do("POST", path, hostConfig)
+	if status == http.StatusNotFound {
+		return &NoSuchContainer{ID: id}
+	}
+	if status == http.StatusNotModified {
+		return &ContainerAlreadyRunning{ID: id}
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// WaitContainer blocks until the given container stops, return the exit code
+// of the container status.
+//
+// See http://goo.gl/J88DHU for more details.
+func (c *Client) WaitContainer(id string) (int, error) {
+	body, status, err := c.do("POST", "/containers/"+id+"/wait", nil)
+	if status == http.StatusNotFound {
+		return 0, &NoSuchContainer{ID: id}
+	}
+	if err != nil {
+		return 0, err
+	}
+	var r struct{ StatusCode int }
+	err = json.Unmarshal(body, &r)
+	if err != nil {
+		return 0, err
+	}
+	return r.StatusCode, nil
+}
+
+// PullImageOptions present the set of options available for pulling an image
+// from a registry.
+//
+// See http://goo.gl/ACyYNS for more details.
+type PullImageOptions struct {
+	Repository    string `qs:"fromImage"`
+	Registry      string
+	Tag           string
+	OutputStream  io.Writer `qs:"-"`
+	RawJSONStream bool      `qs:"-"`
+}
+
+func (c *Client) createImage(qs string, headers map[string]string, in io.Reader, w io.Writer, rawJSONStream bool) error {
+	path := "/images/create?" + qs
+	return c.stream("POST", path, true, rawJSONStream, headers, in, w, nil)
+}
+
+// PullImage pulls an image from a remote registry, logging progress to w.
+//
+// See http://goo.gl/ACyYNS for more details.
+func (c *Client) PullImage(opts PullImageOptions, auth AuthConfiguration) error {
+	if opts.Repository == "" {
+		return ErrNoSuchImage
+	}
+	headers := headersWithAuth(auth)
+	return c.createImage(queryString(&opts), headers, nil, opts.OutputStream, opts.RawJSONStream)
 }

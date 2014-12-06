@@ -295,3 +295,28 @@ func (p *Project) Build(entries []string, noCache bool) error {
 	}
 	return nil
 }
+
+func (p *Project) Run(entries []string, startLinks, recreate bool) error {
+	services, err := p.GetServices(entries, startLinks)
+	if err != nil {
+		return fmt.Errorf("fail to get services: %v", err)
+	}
+
+	var (
+		runningContainers = make([]*Container, 0, 10)
+		containers        []*Container
+	)
+	for _, service := range services {
+		if recreate {
+			containers, err = service.RecreateContainers()
+		} else {
+			containers, err = service.StartOrCreateContainers()
+		}
+		if err != nil {
+			return fmt.Errorf("fail to start or create containers(%s): %v", service.name, err)
+		}
+		runningContainers = append(runningContainers, containers...)
+	}
+
+	return nil
+}

@@ -1,7 +1,9 @@
 package figo
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -105,12 +107,55 @@ type NetworkSettings struct {
 	Ports       map[Port][]PortBinding `json:"Ports,omitempty" yaml:"Ports,omitempty"`
 }
 
+// ListContainersOptions specify parameters to the ListContainers function.
+//
+// See http://goo.gl/XqtcyU for more details.
+type ListContainersOptions struct {
+	All    bool
+	Size   bool
+	Limit  int
+	Since  string
+	Before string
+}
+
 // APIPort is a type that represents a port mapping returned by the Docker API
 type APIPort struct {
 	PrivatePort int64  `json:"PrivatePort,omitempty" yaml:"PrivatePort,omitempty"`
 	PublicPort  int64  `json:"PublicPort,omitempty" yaml:"PublicPort,omitempty"`
 	Type        string `json:"Type,omitempty" yaml:"Type,omitempty"`
 	IP          string `json:"IP,omitempty" yaml:"IP,omitempty"`
+}
+
+// APIContainers represents a container.
+//
+// See http://goo.gl/QeFH7U for more details.
+type APIContainers struct {
+	ID         string    `json:"Id" yaml:"Id"`
+	Image      string    `json:"Image,omitempty" yaml:"Image,omitempty"`
+	Command    string    `json:"Command,omitempty" yaml:"Command,omitempty"`
+	Created    int64     `json:"Created,omitempty" yaml:"Created,omitempty"`
+	Status     string    `json:"Status,omitempty" yaml:"Status,omitempty"`
+	Ports      []APIPort `json:"Ports,omitempty" yaml:"Ports,omitempty"`
+	SizeRw     int64     `json:"SizeRw,omitempty" yaml:"SizeRw,omitempty"`
+	SizeRootFs int64     `json:"SizeRootFs,omitempty" yaml:"SizeRootFs,omitempty"`
+	Names      []string  `json:"Names,omitempty" yaml:"Names,omitempty"`
+}
+
+// ListContainers returns a slice of containers matching the given criteria.
+//
+// See http://goo.gl/XqtcyU for more details.
+func (c *Client) ListContainers(opts ListContainersOptions) ([]APIContainers, error) {
+	path := "/containers/json?" + queryString(opts)
+	body, _, err := c.do("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var containers []APIContainers
+	err = json.Unmarshal(body, &containers)
+	if err != nil {
+		return nil, err
+	}
+	return containers, nil
 }
 
 // PortMappingAPI translates the port mappings as contained in NetworkSettings
@@ -214,4 +259,121 @@ func NewContainerFromId(client *Client, id string) (*Container, error) {
 	c.client = client
 	c.inspected = true
 	return c, nil
+}
+
+//NewContainerFromPs returns a container object from the output of GET /containers/json.
+func NewContainerFromPs(client *Client, apiContainer *APIContainers) *Container {
+	return &Container{
+		client:    client,
+		inspected: false,
+		ID:        apiContainer.ID,
+		Image:     apiContainer.Image,
+		Name:      GetApiContainerName(apiContainer),
+	}
+}
+
+// CreateContainerOptions specify parameters to the CreateContainer function.
+//
+// See http://goo.gl/2xxQQK for more details.
+type CreateContainerOptions struct {
+	Name       string
+	Config     *Config `qs:"-"`
+	HostConfig *HostConfig
+}
+
+func valOrNil(val interface{}) string {
+	if val == nil {
+		return ""
+	}
+	return val.(string)
+}
+
+func parseBool(str string) bool {
+	val, _ := strconv.ParseBool(str)
+	return val
+}
+
+// CreateContainer creates new container by given options.
+func CreateContainer(client *Client, options map[string]interface{}) (*Container, error) {
+	// FIXME: many things need to be done.
+	// https://docs.docker.com/reference/commandline/cli/#run
+	createOptions := CreateContainerOptions{
+		Name: options["name"].(string),
+		Config: &Config{
+			Hostname:     valOrNil(options["hostname"]),
+			Domainname:   valOrNil(options["domainname"]),
+			User:         valOrNil(options["user"]),
+			Memory:       StrTo(valOrNil(options["memory"])).MustInt64(), // FIXME: parse unit?
+			CPUShares:    StrTo(valOrNil(options["cpu-shares"])).MustInt64(),
+			CPUSet:       valOrNil(options["cpuset"]),
+			AttachStdin:  strings.Contains(valOrNil(options["attach"]), "STDIN"),
+			AttachStdout: strings.Contains(valOrNil(options["attach"]), "STDOUT"),
+			AttachStderr: strings.Contains(valOrNil(options["attach"]), "STDERR"),
+			Tty:          parseBool(valOrNil(options["tty"])),
+			OpenStdin:    parseBool(valOrNil(options["interactive"])),
+			// Env:             valOrNil(options["env"]),
+			// Dns:             valOrNil(options["dns"]),
+			VolumesFrom: valOrNil(options["volumes-from"]),
+			WorkingDir:  valOrNil(options["workdir"]),
+			// Entrypoint:      valOrNil(options["entrypoint"]),
+		},
+	}
+
+	// TODO: PortSpecs, ExposedPorts, Volumes
+	c, err := client.CreateContainer(createOptions)
+	if err != nil {
+		return nil, err
+	}
+	return NewContainerFromId(client, c.ID)
+}
+
+func (c *Container) Stop() error {
+	return c.client.StopContainer(c.ID, 60)
+}
+
+func (c *Container) Start() error {
+	return c.client.StartContainer(c.ID, &HostConfig{})
+}
+
+func (c *Container) Wait() (int, error) {
+	return c.client.WaitContainer(c.ID)
+}
+
+// Inspect inspects container information.
+func (c *Container) Inspect() (err error) {
+	c, err = c.client.InspectContainer(c.ID)
+	if err != nil {
+		return err
+	}
+	c.inspected = true
+	return nil
+}
+
+func (c *Container) InspectIfNotInspected() error {
+	if !c.inspected {
+		return c.Inspect()
+	}
+	return nil
+}
+
+// Return a value from the container or None if the value is not set.
+//:param key: a string using dotted notation for nested dictionary lookups
+func (c *Container) Get(key string) interface{} {
+	if err := c.InspectIfNotInspected(); err != nil {
+		log.Printf("Fail to inspect container(%s): %v", c.Name, err)
+		return ""
+	}
+	switch key {
+	case "State.Running":
+		return c.State.Running
+	case "NetworkSettings.Ports":
+		return c.NetworkSettings.Ports
+	}
+	return nil
+}
+
+// IsRunning returns true if container is running.
+func (c *Container) IsRunning() bool {
+	running, ok := c.Get("State.Running").(bool)
+	return ok && running
 }

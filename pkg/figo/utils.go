@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -283,4 +285,172 @@ func queryString(opts interface{}) string {
 		}
 	}
 	return items.Encode()
+}
+
+// Convert string to specify type.
+type StrTo string
+
+func (f StrTo) Exist() bool {
+	return string(f) != string(0x1E)
+}
+
+func (f StrTo) Uint8() (uint8, error) {
+	v, err := strconv.ParseUint(f.String(), 10, 8)
+	return uint8(v), err
+}
+
+func (f StrTo) Int() (int, error) {
+	v, err := strconv.ParseInt(f.String(), 10, 32)
+	return int(v), err
+}
+
+func (f StrTo) Int64() (int64, error) {
+	v, err := strconv.ParseInt(f.String(), 10, 64)
+	return int64(v), err
+}
+
+func (f StrTo) MustUint8() uint8 {
+	v, _ := f.Uint8()
+	return v
+}
+
+func (f StrTo) MustInt() int {
+	v, _ := f.Int()
+	return v
+}
+
+func (f StrTo) MustInt64() int64 {
+	v, _ := f.Int64()
+	return v
+}
+
+func (f StrTo) String() string {
+	if f.Exist() {
+		return string(f)
+	}
+	return ""
+}
+
+type argInt []int
+
+func (a argInt) Get(i int, args ...int) (r int) {
+	if i >= 0 && i < len(a) {
+		r = a[i]
+	} else if len(args) > 0 {
+		r = args[0]
+	}
+	return
+}
+
+// Convert any type to string.
+func ToStr(value interface{}, args ...int) (s string) {
+	switch v := value.(type) {
+	case bool:
+		s = strconv.FormatBool(v)
+	case float32:
+		s = strconv.FormatFloat(float64(v), 'f', argInt(args).Get(0, -1), argInt(args).Get(1, 32))
+	case float64:
+		s = strconv.FormatFloat(v, 'f', argInt(args).Get(0, -1), argInt(args).Get(1, 64))
+	case int:
+		s = strconv.FormatInt(int64(v), argInt(args).Get(0, 10))
+	case int8:
+		s = strconv.FormatInt(int64(v), argInt(args).Get(0, 10))
+	case int16:
+		s = strconv.FormatInt(int64(v), argInt(args).Get(0, 10))
+	case int32:
+		s = strconv.FormatInt(int64(v), argInt(args).Get(0, 10))
+	case int64:
+		s = strconv.FormatInt(v, argInt(args).Get(0, 10))
+	case uint:
+		s = strconv.FormatUint(uint64(v), argInt(args).Get(0, 10))
+	case uint8:
+		s = strconv.FormatUint(uint64(v), argInt(args).Get(0, 10))
+	case uint16:
+		s = strconv.FormatUint(uint64(v), argInt(args).Get(0, 10))
+	case uint32:
+		s = strconv.FormatUint(uint64(v), argInt(args).Get(0, 10))
+	case uint64:
+		s = strconv.FormatUint(v, argInt(args).Get(0, 10))
+	case string:
+		s = v
+	case []byte:
+		s = string(v)
+	default:
+		s = fmt.Sprintf("%v", v)
+	}
+	return s
+}
+
+// GetApiContainerName returns name of API container.
+func GetApiContainerName(apiContainer *APIContainers) string {
+	for _, name := range apiContainer.Names {
+		infos := strings.Split(name, "/")
+		if len(infos) == 2 {
+			return infos[1]
+		}
+	}
+	return ""
+}
+
+var apiContainerNamePattern = regexp.MustCompile(`^([^_]+)_([^_]+)_(run_)?(\d+)$`)
+
+// IsValidContainerName returns true if given name is a valid container name.
+func IsValidContainerName(name string, oneOff bool) bool {
+	m := apiContainerNamePattern.FindAllStringSubmatch(name, -1)
+	if m == nil {
+		return false
+	}
+	if oneOff {
+		return m[0][2] == "run_"
+	}
+	return len(m[0][2]) == 0
+}
+
+// ParseContainerName parses and returns container name.
+func ParseContainerName(name string) (string, string, int) {
+	m := apiContainerNamePattern.FindAllStringSubmatch(name, -1)
+	return m[0][0], m[0][1], StrTo(m[0][3]).MustInt()
+}
+
+// ParseArgs returns options and services' name from command line arguments.
+// FIXME: parse slice values
+func ParseArgs(args []string) (entries []string, _ map[string]string) {
+	log.Println("ParseArgs has limitations and bugs! Cannot handle all the arguments.")
+	options := map[string]string{}
+	for _, arg := range args {
+		if strings.Contains(arg, "=") {
+			infos := strings.SplitN(arg, "=", 2)
+			options[strings.TrimLeft(infos[0], "-")] = infos[1]
+		} else {
+			entries = append(entries, arg)
+		}
+	}
+	return entries, options
+}
+
+type ConfigurationError struct {
+	Msg string
+}
+
+func (e ConfigurationError) Error() string {
+	return e.Msg
+}
+
+// ParseVolumeSpec parses and returns given volume configuration.
+func ParseVolumeSpec(config string) ([]string, error) {
+	infos := strings.Split(config, ":")
+	if len(infos) > 3 {
+		return nil, ConfigurationError{fmt.Sprintf("Volume %s has incorrect format, should be external:internal[:mode]", config)}
+	} else if len(infos) == 1 {
+		return []string{"", infos[0], "rw"}, nil
+	}
+
+	if len(infos) == 2 {
+		infos = append(infos, "rw")
+	}
+
+	if infos[2] != "rw" && infos[2] != "ro" {
+		return nil, ConfigurationError{fmt.Sprintf("Volume %s has invalid mode (%s), should be one of: rw, ro", config, infos[2])}
+	}
+	return infos, nil
 }

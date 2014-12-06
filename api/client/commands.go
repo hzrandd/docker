@@ -2615,6 +2615,11 @@ func (cli *DockerCli) CmdJob(args ...string) error {
 			return err
 		}
 		log.Infoln("Project has been built successfully!")
+	case "run":
+		if err = p.Run(nil, *noCache, false); err != nil {
+			return err
+		}
+		log.Infoln("Project is now running!")
 	default:
 		cmd.Usage()
 	}
