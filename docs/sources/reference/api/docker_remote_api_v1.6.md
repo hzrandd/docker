@@ -393,7 +393,7 @@ Start the container `id`
 
 **Example response**:
 
-        HTTP/1.1 204 No Conten
+        HTTP/1.1 204 No Content
         Content-Type: text/plain
 
 Json Parameters:
@@ -525,7 +525,7 @@ Status Codes:
 
     When using the TTY setting is enabled in
     [`POST /containers/create`
-    ](/api/docker_remote_api_v1.9/#post--containers-create "POST /containers/create"),
+    ](/reference/api/docker_remote_api_v1.9/#create-a-container "POST /containers/create"),
     the stream is the raw data from the process PTY and client's stdin.
     When the TTY is disabled, then the stream is multiplexed to separate
     stdout and stderr.

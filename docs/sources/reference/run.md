@@ -7,7 +7,7 @@ page_keywords: docker, run, configure, runtime
 **Docker runs processes in isolated containers**. When an operator
 executes `docker run`, she starts a process with its own file system,
 its own networking, and its own isolated process tree.  The
-[*Image*](/terms/image/#image-def) which starts the process may define
+[*Image*](/terms/image/#image) which starts the process may define
 defaults related to the binary to run, the networking to expose, and
 more, but `docker run` gives final control to the operator who starts
 the container from the image. That's the main reason
@@ -50,6 +50,7 @@ following options.
  - [Container Identification](#container-identification)
      - [Name (--name)](#name-name)
      - [PID Equivalent](#pid-equivalent)
+ - [IPC Settings](#ipc-settings)
  - [Network Settings](#network-settings)
  - [Clean Up (--rm)](#clean-up-rm)
  - [Runtime Constraints on CPU and Memory](#runtime-constraints-on-cpu-and-memory)
@@ -82,7 +83,7 @@ and pass along signals. All of that is configurable:
 
     -a=[]           : Attach to `STDIN`, `STDOUT` and/or `STDERR`
     -t=false        : Allocate a pseudo-tty
-    --sig-proxy=true: Proxify all received signal to the process (even in non-tty mode)
+    --sig-proxy=true: Proxify all received signal to the process (non-TTY mode only)
     -i=false        : Keep STDIN open even if not attached
 
 If you do not specify `-a` then Docker will [attach all standard
@@ -93,9 +94,10 @@ specify to which of the three standard streams (`STDIN`, `STDOUT`,
 
     $ sudo docker run -a stdin -a stdout -i -t ubuntu /bin/bash
 
-For interactive processes (like a shell) you will typically want a tty
-as well as persistent standard input (`STDIN`), so you'll use `-i -t`
-together in most interactive cases.
+For interactive processes (like a shell), you must use `-i -t` together in
+order to allocate a tty for the container process. Specifying `-t` is however
+forbidden when the client standard output is redirected or pipe, such as in:
+`echo test | docker run -i busybox cat`.
 
 ## Container identification
 
@@ -112,7 +114,7 @@ The UUID identifiers come from the Docker daemon, and if you do not
 assign a name to the container with `--name` then the daemon will also
 generate a random string name too. The name can become a handy way to
 add meaning to a container since you can use this name when defining
-[*links*](/userguide/dockerlinks/#working-with-links-names) (or any
+[*links*](/userguide/dockerlinks) (or any
 other place you need to identify a container). This works for both
 background and foreground Docker containers.
 
@@ -130,6 +132,22 @@ PID files):
 While not strictly a means of identifying a container, you can specify a version of an
 image you'd like to run the container with by adding `image[:tag]` to the command. For
 example, `docker run ubuntu:14.04`.
+
+## IPC Settings
+    --ipc=""  : Set the IPC mode for the container,
+                                 'container:<name|id>': reuses another container's IPC namespace
+                                 'host': use the host's IPC namespace inside the container
+By default, all containers have the IPC namespace enabled 
+
+IPC (POSIX/SysV IPC) namespace provides separation of named shared memory segments, semaphores and message queues.  
+
+Shared memory segments are used to accelerate inter-process communication at
+memory speed, rather than through pipes or through the network stack. Shared
+memory is commonly used by databases and custom-built (typically C/OpenMPI, 
+C++/using boost libraries) high performance applications for scientific
+computing and financial services industries. If these types of applications
+are broken into multiple containers, you might need to share the IPC mechanisms
+of the containers.
 
 ## Network settings
 
@@ -284,6 +302,19 @@ get the same proportion of CPU cycles, but you can tell the kernel to
 give more shares of CPU time to one or more containers when you start
 them via Docker.
 
+The flag `-c` or `--cpu-shares` with value 0 indicates that the running
+container has access to all 1024 (default) CPU shares. However, this value
+can be modified to run a container with a different priority or different
+proportion of CPU cycles.
+
+E.g., If we start three {C0, C1, C2} containers with default values
+(`-c` OR `--cpu-shares` = 0) and one {C3} with (`-c` or `--cpu-shares`=512)
+then C0, C1, and C2 would have access to 100% CPU shares (1024) and C3 would
+only have access to 50% CPU shares (512). In the context of a time-sliced OS
+with time quantum set as 100 milliseconds, containers C0, C1, and C2 will run
+for full-time quantum, and container C3 will run for half-time quantum i.e 50
+milliseconds.
+
 ## Runtime privilege, Linux capabilities, and LXC configuration
 
     --cap-add: Add Linux capabilities
@@ -343,6 +374,34 @@ operator wants to have all capabilities but `MKNOD` they could use:
 For interacting with the network stack, instead of using `--privileged` they
 should use `--cap-add=NET_ADMIN` to modify the network interfaces.
 
+    $ docker run -t -i --rm  ubuntu:14.04 ip link add dummy0 type dummy
+    RTNETLINK answers: Operation not permitted
+    $ docker run -t -i --rm --cap-add=NET_ADMIN ubuntu:14.04 ip link add dummy0 type dummy
+
+To mount a FUSE based filesystem, you need to combine both `--cap-add` and
+`--device`:
+
+    $ docker run --rm -it --cap-add SYS_ADMIN sshfs sshfs sven@10.10.10.20:/home/sven /mnt
+    fuse: failed to open /dev/fuse: Operation not permitted
+    $ docker run --rm -it --device /dev/fuse sshfs sshfs sven@10.10.10.20:/home/sven /mnt
+    fusermount: mount failed: Operation not permitted
+    $ docker run --rm -it --cap-add SYS_ADMIN --device /dev/fuse sshfs
+    # sshfs sven@10.10.10.20:/home/sven /mnt
+    The authenticity of host '10.10.10.20 (10.10.10.20)' can't be established.
+    ECDSA key fingerprint is 25:34:85:75:25:b0:17:46:05:19:04:93:b5:dd:5f:c6.
+    Are you sure you want to continue connecting (yes/no)? yes
+    sven@10.10.10.20's password:
+    root@30aa0cfaf1b5:/# ls -la /mnt/src/docker
+    total 1516
+    drwxrwxr-x 1 1000 1000   4096 Dec  4 06:08 .
+    drwxrwxr-x 1 1000 1000   4096 Dec  4 11:46 ..
+    -rw-rw-r-- 1 1000 1000     16 Oct  8 00:09 .dockerignore
+    -rwxrwxr-x 1 1000 1000    464 Oct  8 00:09 .drone.yml
+    drwxrwxr-x 1 1000 1000   4096 Dec  4 06:11 .git
+    -rw-rw-r-- 1 1000 1000    461 Dec  4 06:08 .gitignore
+    ....
+
+
 If the Docker daemon was started using the `lxc` exec-driver
 (`docker -d --exec-driver=lxc`) then the operator can also specify LXC options
 using one or more `--lxc-conf` parameters. These can be new parameters or
@@ -352,9 +411,16 @@ Note that in the future, a given host's docker daemon may not use LXC, so this
 is an implementation-specific configuration meant for operators already
 familiar with using LXC directly.
 
+> **Note:**
+> If you use `--lxc-conf` to modify a container's configuration which is also
+> managed by the Docker daemon, then the Docker daemon will not know about this
+> modification, and you will need to manage any conflicts yourself. For example,
+> you can use `--lxc-conf` to set a container's IP address, but this will not be
+> reflected in the `/etc/hosts` file.
+
 ## Overriding Dockerfile image defaults
 
-When a developer builds an image from a [*Dockerfile*](/reference/builder/#dockerbuilder)
+When a developer builds an image from a [*Dockerfile*](/reference/builder)
 or when she commits it, the developer can set a number of default parameters
 that take effect when the image starts up as a container.
 
@@ -568,7 +634,7 @@ container's `/etc/hosts` entry will be automatically updated.
 
 The volumes commands are complex enough to have their own documentation
 in section [*Managing data in 
-containers*](/userguide/dockervolumes/#volume-def). A developer can define
+containers*](/userguide/dockervolumes). A developer can define
 one or more `VOLUME`'s associated with an image, but only the operator
 can give access from one container to another (or from a container to a
 volume mounted on the host).

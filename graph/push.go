@@ -115,17 +115,16 @@ func (s *TagStore) pushRepository(r *registry.Session, out io.Writer, localName,
 	}
 	for _, ep := range repoData.Endpoints {
 		out.Write(sf.FormatStatus("", "Pushing repository %s (%d tags)", localName, nTag))
-
 		for _, imgId := range imgList {
-			if r.LookupRemoteImage(imgId, ep, repoData.Tokens) {
-				out.Write(sf.FormatStatus("", "Image %s already pushed, skipping", utils.TruncateID(imgId)))
-			} else {
+			if err := r.LookupRemoteImage(imgId, ep, repoData.Tokens); err != nil {
+				log.Errorf("Error in LookupRemoteImage: %s", err)
 				if _, err := s.pushImage(r, out, remoteName, imgId, ep, repoData.Tokens, sf); err != nil {
 					// FIXME: Continue on error?
 					return err
 				}
+			} else {
+				out.Write(sf.FormatStatus("", "Image %s already pushed, skipping", utils.TruncateID(imgId)))
 			}
-
 			for _, tag := range tagsByImage[imgId] {
 				out.Write(sf.FormatStatus("", "Pushing tag for rev [%s] on {%s}", utils.TruncateID(imgId), ep+"repositories/"+remoteName+"/tags/"+tag))
 
@@ -214,9 +213,7 @@ func (s *TagStore) CmdPush(job *engine.Job) engine.Status {
 		return job.Error(err)
 	}
 
-	secure := registry.IsSecure(hostname, s.insecureRegistries)
-
-	endpoint, err := registry.NewEndpoint(hostname, secure)
+	endpoint, err := registry.NewEndpoint(hostname, s.insecureRegistries)
 	if err != nil {
 		return job.Error(err)
 	}

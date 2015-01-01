@@ -363,14 +363,14 @@ Start the container `id`
              "LxcConf":[{"Key":"lxc.utsname","Value":"docker"}],
              "PortBindings":{ "22/tcp": [{ "HostPort": "11022" }] },
              "PublishAllPorts":false,
-             "Privileged":false
+             "Privileged":false,
              "Dns": ["8.8.8.8"],
              "VolumesFrom": ["parent", "other:ro"]
         }
 
 **Example response**:
 
-        HTTP/1.1 204 No Conten
+        HTTP/1.1 204 No Content
         Content-Type: text/plain
 
 Json Parameters:
@@ -499,7 +499,7 @@ Status Codes:
 
     When using the TTY setting is enabled in
     [`POST /containers/create`
-](../docker_remote_api_v1.9/#post--containers-create "POST /containers/create"),
+](/reference/api/docker_remote_api_v1.9/#create-a-container "POST /containers/create"),
     the stream is the raw data from the process PTY and client's stdin.
     When the TTY is disabled, then the stream is multiplexed to separate
     stdout and stderr.
@@ -998,7 +998,7 @@ Build an image from Dockerfile via stdin
     The archive must include a file called `Dockerfile`
  at its root. It may include any number of other files,
     which will be accessible in the build context (See the [*ADD build
-    command*](/reference/builder/#dockerbuilder)).
+    command*](/reference/builder/#add)).
 
 Query Parameters:
 

@@ -21,7 +21,7 @@ const (
 
 func spawnTestRegistrySession(t *testing.T) *Session {
 	authConfig := &AuthConfig{}
-	endpoint, err := NewEndpoint(makeURL("/v1/"), false)
+	endpoint, err := NewEndpoint(makeURL("/v1/"), insecureRegistries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func spawnTestRegistrySession(t *testing.T) *Session {
 }
 
 func TestPingRegistryEndpoint(t *testing.T) {
-	ep, err := NewEndpoint(makeURL("/v1/"), false)
+	ep, err := NewEndpoint(makeURL("/v1/"), insecureRegistries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +58,11 @@ func TestGetRemoteHistory(t *testing.T) {
 
 func TestLookupRemoteImage(t *testing.T) {
 	r := spawnTestRegistrySession(t)
-	found := r.LookupRemoteImage(imageID, makeURL("/v1/"), token)
-	assertEqual(t, found, true, "Expected remote lookup to succeed")
-	found = r.LookupRemoteImage("abcdef", makeURL("/v1/"), token)
-	assertEqual(t, found, false, "Expected remote lookup to fail")
+	err := r.LookupRemoteImage(imageID, makeURL("/v1/"), token)
+	assertEqual(t, err, nil, "Expected error of remote lookup to nil")
+	if err := r.LookupRemoteImage("abcdef", makeURL("/v1/"), token); err == nil {
+		t.Fatal("Expected error of remote lookup to not nil")
+	}
 }
 
 func TestGetRemoteImageJSON(t *testing.T) {
@@ -316,6 +317,47 @@ func TestAddRequiredHeadersToRedirectedRequests(t *testing.T) {
 
 		if reqTo.Header.Get("Authorization") != "super_secret" {
 			t.Fatal("'Authorization' should be 'super_secret'")
+		}
+	}
+}
+
+func TestIsSecure(t *testing.T) {
+	tests := []struct {
+		addr               string
+		insecureRegistries []string
+		expected           bool
+	}{
+		{IndexServerURL.Host, nil, true},
+		{"example.com", []string{}, true},
+		{"example.com", []string{"example.com"}, false},
+		{"localhost", []string{"localhost:5000"}, false},
+		{"localhost:5000", []string{"localhost:5000"}, false},
+		{"localhost", []string{"example.com"}, false},
+		{"127.0.0.1:5000", []string{"127.0.0.1:5000"}, false},
+		{"localhost", nil, false},
+		{"localhost:5000", nil, false},
+		{"127.0.0.1", nil, false},
+		{"localhost", []string{"example.com"}, false},
+		{"127.0.0.1", []string{"example.com"}, false},
+		{"example.com", nil, true},
+		{"example.com", []string{"example.com"}, false},
+		{"127.0.0.1", []string{"example.com"}, false},
+		{"127.0.0.1:5000", []string{"example.com"}, false},
+		{"example.com:5000", []string{"42.42.0.0/16"}, false},
+		{"example.com", []string{"42.42.0.0/16"}, false},
+		{"example.com:5000", []string{"42.42.42.42/8"}, false},
+		{"127.0.0.1:5000", []string{"127.0.0.0/8"}, false},
+		{"42.42.42.42:5000", []string{"42.1.1.1/8"}, false},
+		{"invalid.domain.com", []string{"42.42.0.0/16"}, true},
+		{"invalid.domain.com", []string{"invalid.domain.com"}, false},
+		{"invalid.domain.com:5000", []string{"invalid.domain.com"}, true},
+		{"invalid.domain.com:5000", []string{"invalid.domain.com:5000"}, false},
+	}
+	for _, tt := range tests {
+		// TODO: remove this once we remove localhost insecure by default
+		insecureRegistries := append(tt.insecureRegistries, "127.0.0.0/8")
+		if sec, err := isSecure(tt.addr, insecureRegistries); err != nil || sec != tt.expected {
+			t.Fatalf("isSecure failed for %q %v, expected %v got %v. Error: %v", tt.addr, insecureRegistries, tt.expected, sec, err)
 		}
 	}
 }

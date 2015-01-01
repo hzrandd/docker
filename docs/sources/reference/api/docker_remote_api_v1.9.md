@@ -364,28 +364,6 @@ Status Codes:
 -   **404** – no such container
 -   **500** – server error
 
-### Resize a container TTY
-
-`GET /containers/(id)/resize?h=<height>&w=<width>`
-
-Resize the TTY of container `id` 
-
-**Example request**:
-
-        GET /containers/4fa6e0f0c678/resize?h=40&w=80 HTTP/1.1
-
-**Example response**:
-
-        HTTP/1.1 200 OK
-        Content-Length: 0
-        Content-Type: text/plain; charset=utf-8
-
-Status Codes:
-
--   **200** – no error
--   **404** – No such container
--   **500** – bad file descriptor
-
 ### Start a container
 
 `POST /containers/(id)/start`
@@ -407,7 +385,7 @@ Start the container `id`
 
 **Example response**:
 
-        HTTP/1.1 204 No Conten
+        HTTP/1.1 204 No Content
         Content-Type: text/plain
 
 Json Parameters:
@@ -544,7 +522,7 @@ Status Codes:
     **Stream details**:
 
     When using the TTY setting is enabled in
-    [`POST /containers/create`](#post--containers-create), the
+    [`POST /containers/create`](#create-a-container), the
     stream is the raw data from the process PTY and client's stdin. When
     the TTY is disabled, then the stream is multiplexed to separate
     stdout and stderr.
@@ -1026,7 +1004,7 @@ Build an image from Dockerfile using a POST body.
     The archive must include a file called `Dockerfile`
  at its root. It may include any number of other files,
     which will be accessible in the build context (See the [*ADD build
-    command*](/reference/builder/#dockerbuilder)).
+    command*](/reference/builder/#add)).
 
 Query Parameters:
 

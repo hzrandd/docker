@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,6 @@ import (
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/engine"
 	flag "github.com/docker/docker/pkg/mflag"
-	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
 )
@@ -188,6 +188,7 @@ func newTestEngine(t Fataler, autorestart bool, root string) *engine.Engine {
 		// Either InterContainerCommunication or EnableIptables must be set,
 		// otherwise NewDaemon will fail because of conflicting settings.
 		InterContainerCommunication: true,
+		TrustKeyPath:                filepath.Join(root, "key.json"),
 	}
 	d, err := daemon.NewDaemon(cfg, eng)
 	if err != nil {
@@ -250,7 +251,7 @@ func readFile(src string, t *testing.T) (content string) {
 // The caller is responsible for destroying the container.
 // Call t.Fatal() at the first error.
 func mkContainer(r *daemon.Daemon, args []string, t *testing.T) (*daemon.Container, *runconfig.HostConfig, error) {
-	config, hc, _, err := parseRun(args, nil)
+	config, hc, _, err := parseRun(args)
 	defer func() {
 		if err != nil && t != nil {
 			t.Fatal(err)
@@ -351,9 +352,9 @@ func getImages(eng *engine.Engine, t *testing.T, all bool, filter string) *engin
 
 }
 
-func parseRun(args []string, sysInfo *sysinfo.SysInfo) (*runconfig.Config, *runconfig.HostConfig, *flag.FlagSet, error) {
+func parseRun(args []string) (*runconfig.Config, *runconfig.HostConfig, *flag.FlagSet, error) {
 	cmd := flag.NewFlagSet("run", flag.ContinueOnError)
 	cmd.SetOutput(ioutil.Discard)
 	cmd.Usage = nil
-	return runconfig.Parse(cmd, args, sysInfo)
+	return runconfig.Parse(cmd, args)
 }

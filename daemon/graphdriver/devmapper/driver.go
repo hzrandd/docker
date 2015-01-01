@@ -10,6 +10,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/graphdriver"
+	"github.com/docker/docker/pkg/devicemapper"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/units"
 )
@@ -55,15 +56,15 @@ func (d *Driver) Status() [][2]string {
 
 	status := [][2]string{
 		{"Pool Name", s.PoolName},
-		{"Pool Blocksize", fmt.Sprintf("%s", units.HumanSize(int64(s.SectorSize)))},
+		{"Pool Blocksize", fmt.Sprintf("%s", units.HumanSize(float64(s.SectorSize)))},
 		{"Data file", s.DataLoopback},
 		{"Metadata file", s.MetadataLoopback},
-		{"Data Space Used", fmt.Sprintf("%s", units.HumanSize(int64(s.Data.Used)))},
-		{"Data Space Total", fmt.Sprintf("%s", units.HumanSize(int64(s.Data.Total)))},
-		{"Metadata Space Used", fmt.Sprintf("%s", units.HumanSize(int64(s.Metadata.Used)))},
-		{"Metadata Space Total", fmt.Sprintf("%s", units.HumanSize(int64(s.Metadata.Total)))},
+		{"Data Space Used", fmt.Sprintf("%s", units.HumanSize(float64(s.Data.Used)))},
+		{"Data Space Total", fmt.Sprintf("%s", units.HumanSize(float64(s.Data.Total)))},
+		{"Metadata Space Used", fmt.Sprintf("%s", units.HumanSize(float64(s.Metadata.Used)))},
+		{"Metadata Space Total", fmt.Sprintf("%s", units.HumanSize(float64(s.Metadata.Total)))},
 	}
-	if vStr, err := GetLibraryVersion(); err == nil {
+	if vStr, err := devicemapper.GetLibraryVersion(); err == nil {
 		status = append(status, [2]string{"Library Version", vStr})
 	}
 	return status

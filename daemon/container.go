@@ -62,8 +62,8 @@ type Container struct {
 	Path string
 	Args []string
 
-	Config *runconfig.Config
-	Image  string
+	Config  *runconfig.Config
+	ImageID string `json:"Image"`
 
 	NetworkSettings *NetworkSettings
 
@@ -186,7 +186,7 @@ func (container *Container) WriteHostConfig() error {
 
 func (container *Container) LogEvent(action string) {
 	d := container.daemon
-	if err := d.eng.Job("log", action, container.ID, d.Repositories().ImageName(container.Image)).Run(); err != nil {
+	if err := d.eng.Job("log", action, container.ID, d.Repositories().ImageName(container.ImageID)).Run(); err != nil {
 		log.Errorf("Error logging event %s for %s: %s", action, container.ID, err)
 	}
 }
@@ -233,6 +233,18 @@ func populateCommand(c *Container, env []string) error {
 		return fmt.Errorf("invalid network mode: %s", c.hostConfig.NetworkMode)
 	}
 
+	ipc := &execdriver.Ipc{}
+
+	if c.hostConfig.IpcMode.IsContainer() {
+		ic, err := c.getIpcContainer()
+		if err != nil {
+			return err
+		}
+		ipc.ContainerID = ic.ID
+	} else {
+		ipc.HostIpc = c.hostConfig.IpcMode.IsHost()
+	}
+
 	// Build lists of devices allowed and created within the container.
 	userSpecifiedDevices := make([]*devices.Device, len(c.hostConfig.Devices))
 	for i, deviceMapping := range c.hostConfig.Devices {
@@ -248,7 +260,10 @@ func populateCommand(c *Container, env []string) error {
 	autoCreatedDevices := append(devices.DefaultAutoCreatedDevices, userSpecifiedDevices...)
 
 	// TODO: this can be removed after lxc-conf is fully deprecated
-	lxcConfig := mergeLxcConfIntoOptions(c.hostConfig)
+	lxcConfig, err := mergeLxcConfIntoOptions(c.hostConfig)
+	if err != nil {
+		return err
+	}
 
 	resources := &execdriver.Resources{
 		Memory:     c.Config.Memory,
@@ -274,6 +289,7 @@ func populateCommand(c *Container, env []string) error {
 		InitPath:           "/.dockerinit",
 		WorkingDir:         c.Config.WorkingDir,
 		Network:            en,
+		Ipc:                ipc,
 		Resources:          resources,
 		AllowedDevices:     allowedDevices,
 		AutoCreatedDevices: autoCreatedDevices,
@@ -531,7 +547,7 @@ func (container *Container) AllocateNetwork() error {
 }
 
 func (container *Container) ReleaseNetwork() {
-	if container.Config.NetworkDisabled {
+	if container.Config.NetworkDisabled || !container.hostConfig.NetworkMode.IsPrivate() {
 		return
 	}
 	eng := container.daemon.eng
@@ -588,6 +604,10 @@ func (container *Container) cleanup() {
 
 	if err := container.Unmount(); err != nil {
 		log.Errorf("%v: Failed to umount filesystem: %v", container.ID, err)
+	}
+
+	for _, eConfig := range container.execCommands.s {
+		container.daemon.unregisterExecCommand(eConfig)
 	}
 }
 
@@ -766,7 +786,7 @@ func (container *Container) GetImage() (*image.Image, error) {
 	if container.daemon == nil {
 		return nil, fmt.Errorf("Can't get image of unregistered container")
 	}
-	return container.daemon.graph.Get(container.Image)
+	return container.daemon.graph.Get(container.ImageID)
 }
 
 func (container *Container) Unmount() error {
@@ -1250,10 +1270,25 @@ func (container *Container) GetMountLabel() string {
 	return container.MountLabel
 }
 
+func (container *Container) getIpcContainer() (*Container, error) {
+	containerID := container.hostConfig.IpcMode.Container()
+	c := container.daemon.Get(containerID)
+	if c == nil {
+		return nil, fmt.Errorf("no such container to join IPC: %s", containerID)
+	}
+	if !c.IsRunning() {
+		return nil, fmt.Errorf("cannot join IPC of a non running container: %s", containerID)
+	}
+	return c, nil
+}
+
 func (container *Container) getNetworkedContainer() (*Container, error) {
 	parts := strings.SplitN(string(container.hostConfig.NetworkMode), ":", 2)
 	switch parts[0] {
 	case "container":
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("no container specified to join network")
+		}
 		nc := container.daemon.Get(parts[1])
 		if nc == nil {
 			return nil, fmt.Errorf("no such container to join network: %s", parts[1])

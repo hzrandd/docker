@@ -6,27 +6,36 @@ feels wrong or incomplete.
 
 ## Topics
 
-* [Security Reports](#security-reports)
+* [Reporting Security Issues](#reporting-security-issues)
 * [Design and Cleanup Proposals](#design-and-cleanup-proposals)
 * [Reporting Issues](#reporting-issues)
 * [Build Environment](#build-environment)
 * [Contribution Guidelines](#contribution-guidelines)
 * [Community Guidelines](#docker-community-guidelines)
 
-## Security Reports
+## Reporting Security Issues
 
-Please **DO NOT** file an issue for security related issues. Please send your
-reports to [security@docker.com](mailto:security@docker.com) instead.
+The Docker maintainers take security very seriously. If you discover a security issue,
+please bring it to their attention right away!
+
+Please send your report privately to [security@docker.com](mailto:security@docker.com),
+please **DO NOT** file a public issue.
+
+Security reports are greatly appreciated and we will publicly thank you for it. We also
+like to send gifts - if you're into Docker shwag make sure to let us know :)
+We currently do not offer a paid security bounty program, but are not ruling it out in
+the future.
 
 ## Design and Cleanup Proposals
 
 When considering a design proposal, we are looking for:
 
 * A description of the problem this design proposal solves
-* An issue -- not a pull request -- that describes what you will take action on
+* A pull request, not an issue, that modifies the documentation describing
+  the feature you are proposing, adding new documentation if necessary.
   * Please prefix your issue with `Proposal:` in the title
-* Please review [the existing Proposals](https://github.com/docker/docker/issues?direction=asc&labels=Proposal&page=1&sort=created&state=open)
-  before reporting a new issue. You can always pair with someone if you both
+* Please review [the existing Proposals](https://github.com/docker/docker/pulls?q=is%3Aopen+is%3Apr+label%3AProposal)
+  before reporting a new one. You can always pair with someone if you both
   have the same idea.
 
 When considering a cleanup task, we are looking for:
@@ -39,6 +48,10 @@ When considering a cleanup task, we are looking for:
 
 ## Reporting Issues
 
+A great way to contribute to the project is to send a detailed report when you
+encounter an issue. We always appreciate a well-written, thorough bug report,
+and will thank you for it!
+
 When reporting [issues](https://github.com/docker/docker/issues) on
 GitHub please include your host OS (Ubuntu 12.04, Fedora 19, etc).
 Please include:
@@ -50,6 +63,45 @@ Please include:
 Please also include the steps required to reproduce the problem if
 possible and applicable.  This information will help us review and fix
 your issue faster.
+
+### Template
+
+```
+Description of problem:
+
+
+`docker version`:
+
+
+`docker info`:
+
+
+`uname -a`:
+
+
+Environment details (AWS, VirtualBox, physical, etc.):
+
+
+How reproducible:
+
+
+Steps to Reproduce:
+1.
+2.
+3.
+
+
+Actual Results:
+
+
+Expected Results:
+
+
+Additional info:
+
+
+
+```
 
 ## Build Environment
 
@@ -159,7 +211,7 @@ component affected. For example, if a change affects `docs/` and `registry/`, it
 needs an absolute majority from the maintainers of `docs/` AND, separately, an
 absolute majority of the maintainers of `registry/`.
 
-For more details see [MAINTAINERS.md](hack/MAINTAINERS.md)
+For more details see [MAINTAINERS.md](project/MAINTAINERS.md)
 
 ### Sign your work
 
@@ -219,18 +271,6 @@ commit automatically with `git commit -s`.
 Note that the old-style `Docker-DCO-1.1-Signed-off-by: ...` format is still
 accepted, so there is no need to update outstanding pull requests to the new
 format right away, but please do adjust your processes for future contributions.
-
-#### Small patch exception
-
-There are several exceptions to the signing requirement. Currently these are:
-
-* Your patch fixes spelling or grammar errors.
-* Your patch is a single line change to documentation contained in the
-  `docs` directory.
-* Your patch fixes Markdown formatting or syntax errors in the
-  documentation contained in the `docs` directory.
-
-If you have any questions, please refer to the FAQ in the [docs](http://docs.docker.com)
 
 ### How can I become a maintainer?
 

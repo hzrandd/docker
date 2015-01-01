@@ -36,6 +36,10 @@ func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, e
 	container.MountConfig.NoPivotRoot = os.Getenv("DOCKER_RAMDISK") != ""
 	container.RestrictSys = true
 
+	if err := d.createIpc(container, c); err != nil {
+		return nil, err
+	}
+
 	if err := d.createNetwork(container, c); err != nil {
 		return nil, err
 	}
@@ -78,7 +82,7 @@ func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, e
 
 func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Command) error {
 	if c.Network.HostNetworking {
-		container.Namespaces["NEWNET"] = false
+		container.Namespaces.Remove(libcontainer.NEWNET)
 		return nil
 	}
 
@@ -115,10 +119,29 @@ func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Com
 		cmd := active.cmd
 
 		nspath := filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "net")
-		container.Networks = append(container.Networks, &libcontainer.Network{
-			Type:   "netns",
-			NsPath: nspath,
-		})
+		container.Namespaces.Add(libcontainer.NEWNET, nspath)
+	}
+
+	return nil
+}
+
+func (d *driver) createIpc(container *libcontainer.Config, c *execdriver.Command) error {
+	if c.Ipc.HostIpc {
+		container.Namespaces.Remove(libcontainer.NEWIPC)
+		return nil
+	}
+
+	if c.Ipc.ContainerID != "" {
+		d.Lock()
+		active := d.activeContainers[c.Ipc.ContainerID]
+		d.Unlock()
+
+		if active == nil || active.cmd.Process == nil {
+			return fmt.Errorf("%s is not a valid running container to join", c.Ipc.ContainerID)
+		}
+		cmd := active.cmd
+
+		container.Namespaces.Add(libcontainer.NEWIPC, filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "ipc"))
 	}
 
 	return nil

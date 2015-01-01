@@ -15,6 +15,7 @@ import (
 	"github.com/docker/libcontainer/label"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/execdriver/execdrivers"
 	"github.com/docker/docker/daemon/execdriver/lxc"
@@ -83,6 +84,7 @@ func (c *contStore) List() []*Container {
 }
 
 type Daemon struct {
+	ID             string
 	repository     string
 	sysInitPath    string
 	containers     *contStore
@@ -128,6 +130,7 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 		"execCreate":        daemon.ContainerExecCreate,
 		"execStart":         daemon.ContainerExecStart,
 		"execResize":        daemon.ContainerExecResize,
+		"execInspect":       daemon.ContainerExecInspect,
 	} {
 		if err := eng.Register(name, method); err != nil {
 			return err
@@ -231,7 +234,7 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 		log.Debugf("killing old running container %s", container.ID)
 
 		existingPid := container.Pid
-		container.SetStopped(0)
+		container.SetStopped(&execdriver.ExitStatus{ExitCode: 0})
 
 		// We only have to handle this for lxc because the other drivers will ensure that
 		// no processes are left when docker dies
@@ -263,7 +266,7 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 
 			log.Debugf("Marking as stopped")
 
-			container.SetStopped(-127)
+			container.SetStopped(&execdriver.ExitStatus{ExitCode: -127})
 			if err := container.ToDisk(); err != nil {
 				return err
 			}
@@ -414,10 +417,10 @@ func (daemon *Daemon) checkDeprecatedExpose(config *runconfig.Config) bool {
 
 func (daemon *Daemon) mergeAndVerifyConfig(config *runconfig.Config, img *image.Image) ([]string, error) {
 	warnings := []string{}
-	if daemon.checkDeprecatedExpose(img.Config) || daemon.checkDeprecatedExpose(config) {
+	if (img != nil && daemon.checkDeprecatedExpose(img.Config)) || daemon.checkDeprecatedExpose(config) {
 		warnings = append(warnings, "The mapping to public ports on your host via Dockerfile EXPOSE (host:port:port) has been deprecated. Use -p to publish the ports.")
 	}
-	if img.Config != nil {
+	if img != nil && img.Config != nil {
 		if err := runconfig.Merge(config, img.Config); err != nil {
 			return nil, err
 		}
@@ -475,8 +478,8 @@ func (daemon *Daemon) reserveName(id, name string) (string, error) {
 		} else {
 			nameAsKnownByUser := strings.TrimPrefix(name, "/")
 			return "", fmt.Errorf(
-				"Conflict, The name %s is already assigned to %s. You have to delete (or rename) that container to be able to assign %s to a container again.", nameAsKnownByUser,
-				utils.TruncateID(conflictingContainer.ID), nameAsKnownByUser)
+				"Conflict. The name %q is already in use by container %s. You have to delete that container to be able to reuse that name.", nameAsKnownByUser,
+				utils.TruncateID(conflictingContainer.ID))
 		}
 	}
 	return name, nil
@@ -529,10 +532,10 @@ func (daemon *Daemon) getEntrypointAndArgs(configEntrypoint, configCmd []string)
 	return entrypoint, args
 }
 
-func parseSecurityOpt(container *Container, config *runconfig.Config) error {
+func parseSecurityOpt(container *Container, config *runconfig.HostConfig) error {
 	var (
-		label_opts []string
-		err        error
+		labelOpts []string
+		err       error
 	)
 
 	for _, opt := range config.SecurityOpt {
@@ -542,7 +545,7 @@ func parseSecurityOpt(container *Container, config *runconfig.Config) error {
 		}
 		switch con[0] {
 		case "label":
-			label_opts = append(label_opts, con[1])
+			labelOpts = append(labelOpts, con[1])
 		case "apparmor":
 			container.AppArmorProfile = con[1]
 		default:
@@ -550,11 +553,11 @@ func parseSecurityOpt(container *Container, config *runconfig.Config) error {
 		}
 	}
 
-	container.ProcessLabel, container.MountLabel, err = label.InitLabels(label_opts)
+	container.ProcessLabel, container.MountLabel, err = label.InitLabels(labelOpts)
 	return err
 }
 
-func (daemon *Daemon) newContainer(name string, config *runconfig.Config, img *image.Image) (*Container, error) {
+func (daemon *Daemon) newContainer(name string, config *runconfig.Config, imgID string) (*Container, error) {
 	var (
 		id  string
 		err error
@@ -575,7 +578,7 @@ func (daemon *Daemon) newContainer(name string, config *runconfig.Config, img *i
 		Args:            args, //FIXME: de-duplicate from config
 		Config:          config,
 		hostConfig:      &runconfig.HostConfig{},
-		Image:           img.ID, // Always use the resolved image id
+		ImageID:         imgID,
 		NetworkSettings: &NetworkSettings{},
 		Name:            name,
 		Driver:          daemon.driver.String(),
@@ -584,18 +587,17 @@ func (daemon *Daemon) newContainer(name string, config *runconfig.Config, img *i
 		execCommands:    newExecStore(),
 	}
 	container.root = daemon.containerRoot(container.ID)
-	err = parseSecurityOpt(container, config)
 	return container, err
 }
 
-func (daemon *Daemon) createRootfs(container *Container, img *image.Image) error {
+func (daemon *Daemon) createRootfs(container *Container) error {
 	// Step 1: create the container directory.
 	// This doubles as a barrier to avoid race conditions.
 	if err := os.Mkdir(container.root, 0700); err != nil {
 		return err
 	}
 	initID := fmt.Sprintf("%s-init", container.ID)
-	if err := daemon.driver.Create(initID, img.ID); err != nil {
+	if err := daemon.driver.Create(initID, container.ImageID); err != nil {
 		return err
 	}
 	initPath, err := daemon.driver.Get(initID, "")
@@ -694,6 +696,9 @@ func (daemon *Daemon) RegisterLinks(container *Container, hostConfig *runconfig.
 			if child == nil {
 				return fmt.Errorf("Could not get container for %s", parts["name"])
 			}
+			if child.hostConfig.NetworkMode.IsHost() {
+				return runconfig.ErrConflictHostNetworkAndLinks
+			}
 			if err := daemon.RegisterLink(container, child, parts["alias"]); err != nil {
 				return err
 			}
@@ -719,7 +724,6 @@ func NewDaemon(config *Config, eng *engine.Engine) (*Daemon, error) {
 }
 
 func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error) {
-	// Apply configuration defaults
 	if config.Mtu == 0 {
 		config.Mtu = getDefaultNetworkMtu()
 	}
@@ -894,7 +898,13 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, err
 	}
 
+	trustKey, err := api.LoadOrCreateTrustKey(config.TrustKeyPath)
+	if err != nil {
+		return nil, err
+	}
+
 	daemon := &Daemon{
+		ID:             trustKey.PublicKey().KeyID(),
 		repository:     daemonRepo,
 		containers:     &contStore{s: make(map[string]*Container)},
 		execCommands:   newExecStore(),
@@ -919,7 +929,6 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	eng.OnShutdown(func() {
 		// FIXME: if these cleanup steps can be called concurrently, register
 		// them as separate handlers to speed up total shutdown time
-		// FIXME: use engine logging instead of log.Errorf
 		if err := daemon.shutdown(); err != nil {
 			log.Errorf("daemon.shutdown(): %s", err)
 		}
@@ -991,7 +1000,7 @@ func (daemon *Daemon) Diff(container *Container) (archive.Archive, error) {
 	return daemon.driver.Diff(container.ID, initID)
 }
 
-func (daemon *Daemon) Run(c *Container, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (int, error) {
+func (daemon *Daemon) Run(c *Container, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (execdriver.ExitStatus, error) {
 	return daemon.execDriver.Run(c.command, pipes, startCallback)
 }
 
@@ -1090,9 +1099,9 @@ func (daemon *Daemon) ImageGetCached(imgID string, config *runconfig.Config) (*i
 	// Loop on the children of the given image and check the config
 	var match *image.Image
 	for elem := range imageMap[imgID] {
-		img, err := daemon.Graph().Get(elem)
-		if err != nil {
-			return nil, err
+		img, ok := images[elem]
+		if !ok {
+			return nil, fmt.Errorf("unable to find image %q", elem)
 		}
 		if runconfig.Compare(&img.ContainerConfig, config) {
 			if match == nil || match.Created.Before(img.Created) {

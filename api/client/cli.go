@@ -3,6 +3,7 @@ package client
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -104,6 +105,16 @@ func (cli *DockerCli) LoadConfigFile() (err error) {
 	return err
 }
 
+func (cli *DockerCli) CheckTtyInput(attachStdin, ttyMode bool) error {
+	// In order to attach to a container tty, input stream for the client must
+	// be a tty itself: redirecting or piping the client standard input is
+	// incompatible with `docker run -t`, `docker exec -t` or `docker attach`.
+	if ttyMode && attachStdin && !cli.isTerminalIn {
+		return errors.New("cannot enable tty mode on non tty input")
+	}
+	return nil
+}
+
 func NewDockerCli(in io.ReadCloser, out, err io.Writer, key libtrust.PrivateKey, proto, addr string, tlsConfig *tls.Config) *DockerCli {
 	var (
 		inFd          uintptr
@@ -138,14 +149,18 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, key libtrust.PrivateKey,
 	// The transport is created here for reuse during the client session
 	tr := &http.Transport{
 		TLSClientConfig: tlsConfig,
-		Dial: func(dial_network, dial_addr string) (net.Conn, error) {
-			// Why 32? See issue 8035
-			return net.DialTimeout(proto, addr, 32*time.Second)
-		},
 	}
+
+	// Why 32? See issue 8035
+	timeout := 32 * time.Second
 	if proto == "unix" {
 		// no need in compressing for local communications
 		tr.DisableCompression = true
+		tr.Dial = func(_, _ string) (net.Conn, error) {
+			return net.DialTimeout(proto, addr, timeout)
+		}
+	} else {
+		tr.Dial = (&net.Dialer{Timeout: timeout}).Dial
 	}
 
 	return &DockerCli{

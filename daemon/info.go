@@ -56,6 +56,7 @@ func (daemon *Daemon) CmdInfo(job *engine.Job) engine.Status {
 		return job.Error(err)
 	}
 	v := &engine.Env{}
+	v.SetJson("ID", daemon.ID)
 	v.SetInt("Containers", len(daemon.List()))
 	v.SetInt("Images", imgcount)
 	v.Set("Driver", daemon.GraphDriver().String())
@@ -75,6 +76,11 @@ func (daemon *Daemon) CmdInfo(job *engine.Job) engine.Status {
 	v.Set("InitPath", initPath)
 	v.SetInt("NCPU", runtime.NumCPU())
 	v.SetInt64("MemTotal", meminfo.MemTotal)
+	v.Set("DockerRootDir", daemon.Config().Root)
+	if hostname, err := os.Hostname(); err == nil {
+		v.SetJson("Name", hostname)
+	}
+	v.SetList("Labels", daemon.Config().Labels)
 	if _, err := v.WriteTo(job.Stdout); err != nil {
 		return job.Error(err)
 	}

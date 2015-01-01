@@ -7,7 +7,7 @@ import (
 )
 
 func TestResizeApiResponse(t *testing.T) {
-	runCmd := exec.Command(dockerBinary, "run", "-d", "busybox", "true")
+	runCmd := exec.Command(dockerBinary, "run", "-d", "busybox", "top")
 	out, _, err := runCommandWithOutput(runCmd)
 	if err != nil {
 		t.Fatalf(out, err)
@@ -16,7 +16,7 @@ func TestResizeApiResponse(t *testing.T) {
 	cleanedContainerID := stripTrailingCharacters(out)
 
 	endpoint := "/containers/" + cleanedContainerID + "/resize?h=40&w=40"
-	_, err = sockRequest("POST", endpoint)
+	_, err = sockRequest("POST", endpoint, nil)
 	if err != nil {
 		t.Fatalf("resize Request failed %v", err)
 	}
@@ -41,7 +41,7 @@ func TestResizeApiResponseWhenContainerNotStarted(t *testing.T) {
 	}
 
 	endpoint := "/containers/" + cleanedContainerID + "/resize?h=40&w=40"
-	body, err := sockRequest("POST", endpoint)
+	body, err := sockRequest("POST", endpoint, nil)
 	if err == nil {
 		t.Fatalf("resize should fail when container is not started")
 	}

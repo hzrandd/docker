@@ -1,7 +1,11 @@
+// +build daemon
+
 package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -65,7 +69,7 @@ func TestDaemonRestartWithVolumesRefs(t *testing.T) {
 	if err := d.Restart(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Cmd("run", "-d", "--volumes-from", "volrestarttest1", "--name", "volrestarttest2", "busybox"); err != nil {
+	if _, err := d.Cmd("run", "-d", "--volumes-from", "volrestarttest1", "--name", "volrestarttest2", "busybox", "top"); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := d.Cmd("rm", "-fv", "volrestarttest2"); err != nil {
@@ -169,7 +173,7 @@ func TestDaemonIptablesClean(t *testing.T) {
 
 	deleteAllContainers()
 
-	logDone("run,iptables - iptables rules cleaned after daemon restart")
+	logDone("daemon - run,iptables - iptables rules cleaned after daemon restart")
 }
 
 func TestDaemonIptablesCreate(t *testing.T) {
@@ -221,5 +225,95 @@ func TestDaemonIptablesCreate(t *testing.T) {
 
 	deleteAllContainers()
 
-	logDone("run,iptables - iptables rules for always restarted container created after daemon restart")
+	logDone("daemon - run,iptables - iptables rules for always restarted container created after daemon restart")
+}
+
+func TestDaemonLoggingLevel(t *testing.T) {
+	d := NewDaemon(t)
+
+	if err := d.Start("--log-level=bogus"); err == nil {
+		t.Fatal("Daemon should not have been able to start")
+	}
+
+	d = NewDaemon(t)
+	if err := d.Start("--log-level=debug"); err != nil {
+		t.Fatal(err)
+	}
+	d.Stop()
+	content, _ := ioutil.ReadFile(d.logFile.Name())
+	if !strings.Contains(string(content), `level="debug"`) {
+		t.Fatalf(`Missing level="debug" in log file:\n%s`, string(content))
+	}
+
+	d = NewDaemon(t)
+	if err := d.Start("--log-level=fatal"); err != nil {
+		t.Fatal(err)
+	}
+	d.Stop()
+	content, _ = ioutil.ReadFile(d.logFile.Name())
+	if strings.Contains(string(content), `level="debug"`) {
+		t.Fatalf(`Should not have level="debug" in log file:\n%s`, string(content))
+	}
+
+	d = NewDaemon(t)
+	if err := d.Start("-D"); err != nil {
+		t.Fatal(err)
+	}
+	d.Stop()
+	content, _ = ioutil.ReadFile(d.logFile.Name())
+	if !strings.Contains(string(content), `level="debug"`) {
+		t.Fatalf(`Missing level="debug" in log file using -D:\n%s`, string(content))
+	}
+
+	d = NewDaemon(t)
+	if err := d.Start("--debug"); err != nil {
+		t.Fatal(err)
+	}
+	d.Stop()
+	content, _ = ioutil.ReadFile(d.logFile.Name())
+	if !strings.Contains(string(content), `level="debug"`) {
+		t.Fatalf(`Missing level="debug" in log file using --debug:\n%s`, string(content))
+	}
+
+	d = NewDaemon(t)
+	if err := d.Start("--debug", "--log-level=fatal"); err != nil {
+		t.Fatal(err)
+	}
+	d.Stop()
+	content, _ = ioutil.ReadFile(d.logFile.Name())
+	if !strings.Contains(string(content), `level="debug"`) {
+		t.Fatalf(`Missing level="debug" in log file when using both --debug and --log-level=fatal:\n%s`, string(content))
+	}
+
+	logDone("daemon - Logging Level")
+}
+
+func TestDaemonAllocatesListeningPort(t *testing.T) {
+	listeningPorts := [][]string{
+		{"0.0.0.0", "0.0.0.0", "5678"},
+		{"127.0.0.1", "127.0.0.1", "1234"},
+		{"localhost", "127.0.0.1", "1235"},
+	}
+
+	cmdArgs := []string{}
+	for _, hostDirective := range listeningPorts {
+		cmdArgs = append(cmdArgs, "--host", fmt.Sprintf("tcp://%s:%s", hostDirective[0], hostDirective[2]))
+	}
+
+	d := NewDaemon(t)
+	if err := d.StartWithBusybox(cmdArgs...); err != nil {
+		t.Fatalf("Could not start daemon with busybox: %v", err)
+	}
+	defer d.Stop()
+
+	for _, hostDirective := range listeningPorts {
+		output, err := d.Cmd("run", "-p", fmt.Sprintf("%s:%s:80", hostDirective[1], hostDirective[2]), "busybox", "true")
+		if err == nil {
+			t.Fatalf("Container should not start, expected port already allocated error: %q", output)
+		} else if !strings.Contains(output, "port is already allocated") {
+			t.Fatalf("Expected port is already allocated error: %q", output)
+		}
+	}
+
+	logDone("daemon - daemon listening port is allocated")
 }

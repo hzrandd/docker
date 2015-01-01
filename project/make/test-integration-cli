@@ -1,0 +1,23 @@
+#!/bin/bash
+set -e
+
+DEST=$1
+
+bundle_test_integration_cli() {
+	go_test_dir ./integration-cli
+}
+
+# subshell so that we can export PATH without breaking other things
+exec > >(tee -a $DEST/test.log) 2>&1
+(
+	source "$(dirname "$BASH_SOURCE")/.integration-daemon-start"
+
+	# pull the busybox image before running the tests
+	sleep 2
+
+	source "$(dirname "$BASH_SOURCE")/.ensure-busybox"
+
+	bundle_test_integration_cli
+
+	source "$(dirname "$BASH_SOURCE")/.integration-daemon-stop"
+)

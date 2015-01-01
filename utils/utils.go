@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/dockerversion"
@@ -31,6 +30,10 @@ type KeyValuePair struct {
 	Key   string
 	Value string
 }
+
+var (
+	validHex = regexp.MustCompile(`^([a-f0-9]{64})$`)
+)
 
 // Request a given URL and return an io.Reader
 func Download(url string) (resp *http.Response, err error) {
@@ -191,11 +194,9 @@ func GenerateRandomID() string {
 }
 
 func ValidateID(id string) error {
-	if id == "" {
-		return fmt.Errorf("Id can't be empty")
-	}
-	if strings.Contains(id, ":") {
-		return fmt.Errorf("Invalid character in id: ':'")
+	if ok := validHex.MatchString(id); !ok {
+		err := fmt.Errorf("image ID '%s' is invalid", id)
+		return err
 	}
 	return nil
 }
@@ -289,21 +290,7 @@ func NewHTTPRequestError(msg string, res *http.Response) error {
 	}
 }
 
-func IsURL(str string) bool {
-	return strings.HasPrefix(str, "http://") || strings.HasPrefix(str, "https://")
-}
-
-func IsGIT(str string) bool {
-	return strings.HasPrefix(str, "git://") || strings.HasPrefix(str, "github.com/") || strings.HasPrefix(str, "git@github.com:") || (strings.HasSuffix(str, ".git") && IsURL(str))
-}
-
-func ValidGitTransport(str string) bool {
-	return strings.HasPrefix(str, "git://") || strings.HasPrefix(str, "git@") || IsURL(str)
-}
-
-var (
-	localHostRx = regexp.MustCompile(`(?m)^nameserver 127[^\n]+\n*`)
-)
+var localHostRx = regexp.MustCompile(`(?m)^nameserver 127[^\n]+\n*`)
 
 // RemoveLocalDns looks into the /etc/resolv.conf,
 // and removes any local nameserver entries.
@@ -451,36 +438,6 @@ func ReadSymlinkedDirectory(path string) (string, error) {
 		return "", fmt.Errorf("canonical path points to a file '%s'", realPath)
 	}
 	return realPath, nil
-}
-
-// TreeSize walks a directory tree and returns its total size in bytes.
-func TreeSize(dir string) (size int64, err error) {
-	data := make(map[uint64]struct{})
-	err = filepath.Walk(dir, func(d string, fileInfo os.FileInfo, e error) error {
-		// Ignore directory sizes
-		if fileInfo == nil {
-			return nil
-		}
-
-		s := fileInfo.Size()
-		if fileInfo.IsDir() || s == 0 {
-			return nil
-		}
-
-		// Check inode to handle hard links correctly
-		inode := fileInfo.Sys().(*syscall.Stat_t).Ino
-		// inode is not a uint64 on all platforms. Cast it to avoid issues.
-		if _, exists := data[uint64(inode)]; exists {
-			return nil
-		}
-		// inode is not a uint64 on all platforms. Cast it to avoid issues.
-		data[uint64(inode)] = struct{}{}
-
-		size += s
-
-		return nil
-	})
-	return
 }
 
 // ValidateContextDirectory checks if all the contents of the directory

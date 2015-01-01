@@ -298,6 +298,9 @@ func validateRepoName(name string) error {
 	if name == "" {
 		return fmt.Errorf("Repository name can't be empty")
 	}
+	if name == "scratch" {
+		return fmt.Errorf("'scratch' is a reserved name")
+	}
 	return nil
 }
 
@@ -307,7 +310,7 @@ func ValidateTagName(name string) error {
 		return fmt.Errorf("Tag name can't be empty")
 	}
 	if !validTagName.MatchString(name) {
-		return fmt.Errorf("Illegal tag name (%s): only [A-Za-z0-9_.-] are allowed, minimum 2, maximum 30 in length", name)
+		return fmt.Errorf("Illegal tag name (%s): only [A-Za-z0-9_.-] are allowed, minimum 1, maximum 128 in length", name)
 	}
 	return nil
 }

@@ -407,7 +407,7 @@ Start the container `id`
 
 **Example response**:
 
-        HTTP/1.1 204 No Conten
+        HTTP/1.1 204 No Content
         Content-Type: text/plain
 
 Json Parameters:
@@ -576,7 +576,7 @@ Status Codes:
 
     When using the TTY setting is enabled in
     [`POST /containers/create`
-    ](../docker_remote_api_v1.9/#post--containers-create "POST /containers/create"),
+    ](/reference/api/docker_remote_api_v1.9/#create-a-container "POST /containers/create"),
     the stream is the raw data from the process PTY and client's stdin.
     When the TTY is disabled, then the stream is multiplexed to separate
     stdout and stderr.
@@ -739,7 +739,8 @@ Status Codes:
 Query Parameters:
 
 -   **all** – 1/True/true or 0/False/false, default false
--   **filters** – a json encoded value of the filters (a map[string][string]) to process on the images list.
+-   **filters** – a json encoded value of the filters (a map[string][]string) to process on the images list. Available filters:
+  -   dangling=true
 
 ### Create an image
 
@@ -1063,7 +1064,7 @@ Query Parameters:
 -   **q** – suppress verbose build output
 -   **nocache** – do not use the cache when building the image
 -   **rm** - remove intermediate containers after a successful build (default behavior)
--   **forcerm - always remove intermediate containers (includes rm)
+-   **forcerm** - always remove intermediate containers (includes rm)
 
     Request Headers:
 

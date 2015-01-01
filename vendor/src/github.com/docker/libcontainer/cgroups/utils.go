@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/pkg/mount"
 )
@@ -189,6 +190,34 @@ func EnterPid(cgroupPaths map[string]string, pid int) error {
 			}
 		}
 	}
-
 	return nil
+}
+
+// RemovePaths iterates over the provided paths removing them.
+// We trying to remove all paths five times with increasing delay between tries.
+// If after all there are not removed cgroups - appropriate error will be
+// returned.
+func RemovePaths(paths map[string]string) (err error) {
+	delay := 10 * time.Millisecond
+	for i := 0; i < 5; i++ {
+		if i != 0 {
+			time.Sleep(delay)
+			delay *= 2
+		}
+		for s, p := range paths {
+			os.RemoveAll(p)
+			// TODO: here probably should be logging
+			_, err := os.Stat(p)
+			// We need this strange way of checking cgroups existence because
+			// RemoveAll almost always returns error, even on already removed
+			// cgroups
+			if os.IsNotExist(err) {
+				delete(paths, s)
+			}
+		}
+		if len(paths) == 0 {
+			return nil
+		}
+	}
+	return fmt.Errorf("Failed to remove paths: %s", paths)
 }

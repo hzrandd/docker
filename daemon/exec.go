@@ -24,6 +24,7 @@ type execConfig struct {
 	sync.Mutex
 	ID            string
 	Running       bool
+	ExitCode      int
 	ProcessConfig execdriver.ProcessConfig
 	StreamConfig
 	OpenStdin  bool
@@ -34,7 +35,7 @@ type execConfig struct {
 
 type execStore struct {
 	s map[string]*execConfig
-	sync.Mutex
+	sync.RWMutex
 }
 
 func newExecStore() *execStore {
@@ -48,9 +49,9 @@ func (e *execStore) Add(id string, execConfig *execConfig) {
 }
 
 func (e *execStore) Get(id string) *execConfig {
-	e.Lock()
+	e.RLock()
 	res := e.s[id]
-	e.Unlock()
+	e.RUnlock()
 	return res
 }
 
@@ -58,6 +59,16 @@ func (e *execStore) Delete(id string) {
 	e.Lock()
 	delete(e.s, id)
 	e.Unlock()
+}
+
+func (e *execStore) List() []string {
+	var IDs []string
+	e.RLock()
+	for id := range e.s {
+		IDs = append(IDs, id)
+	}
+	e.RUnlock()
+	return IDs
 }
 
 func (execConfig *execConfig) Resize(h, w int) error {
@@ -97,7 +108,9 @@ func (d *Daemon) getActiveContainer(name string) (*Container, error) {
 	if !container.IsRunning() {
 		return nil, fmt.Errorf("Container %s is not running", name)
 	}
-
+	if container.IsPaused() {
+		return nil, fmt.Errorf("Container %s is paused, unpause the container before exec", name)
+	}
 	return container, nil
 }
 
@@ -117,13 +130,14 @@ func (d *Daemon) ContainerExecCreate(job *engine.Job) engine.Status {
 		return job.Error(err)
 	}
 
-	config := runconfig.ExecConfigFromJob(job)
+	config, err := runconfig.ExecConfigFromJob(job)
+	if err != nil {
+		return job.Error(err)
+	}
 
 	entrypoint, args := d.getEntrypointAndArgs(nil, config.Cmd)
 
 	processConfig := execdriver.ProcessConfig{
-		Privileged: config.Privileged,
-		User:       config.User,
 		Tty:        config.Tty,
 		Entrypoint: entrypoint,
 		Arguments:  args,
@@ -207,8 +221,9 @@ func (d *Daemon) ContainerExecStart(job *engine.Job) engine.Status {
 
 	execErr := make(chan error)
 
-	// Remove exec from daemon and container.
-	defer d.unregisterExecCommand(execConfig)
+	// Note, the execConfig data will be removed when the container
+	// itself is deleted.  This allows us to query it (for things like
+	// the exitStatus) even after the cmd is done running.
 
 	go func() {
 		err := container.Exec(execConfig)
@@ -231,7 +246,21 @@ func (d *Daemon) ContainerExecStart(job *engine.Job) engine.Status {
 }
 
 func (d *Daemon) Exec(c *Container, execConfig *execConfig, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (int, error) {
-	return d.execDriver.Exec(c.command, &execConfig.ProcessConfig, pipes, startCallback)
+	exitStatus, err := d.execDriver.Exec(c.command, &execConfig.ProcessConfig, pipes, startCallback)
+
+	// On err, make sure we don't leave ExitCode at zero
+	if err != nil && exitStatus == 0 {
+		exitStatus = 128
+	}
+
+	execConfig.ExitCode = exitStatus
+	execConfig.Running = false
+
+	return exitStatus, err
+}
+
+func (container *Container) GetExecIDs() []string {
+	return container.execCommands.List()
 }
 
 func (container *Container) Exec(execConfig *execConfig) error {

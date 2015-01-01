@@ -1,14 +1,12 @@
 package vfs
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 
 	"github.com/docker/docker/daemon/graphdriver"
-	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/pkg/chrootarchive"
 	"github.com/docker/libcontainer/label"
 )
 
@@ -39,14 +37,6 @@ func (d *Driver) Cleanup() error {
 	return nil
 }
 
-func isGNUcoreutils() bool {
-	if stdout, err := exec.Command("cp", "--version").Output(); err == nil {
-		return bytes.Contains(stdout, []byte("GNU coreutils"))
-	}
-
-	return false
-}
-
 func (d *Driver) Create(id, parent string) error {
 	dir := d.dir(id)
 	if err := os.MkdirAll(path.Dir(dir), 0700); err != nil {
@@ -66,7 +56,7 @@ func (d *Driver) Create(id, parent string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %s", parent, err)
 	}
-	if err := archive.CopyWithTar(parentDir, dir); err != nil {
+	if err := chrootarchive.CopyWithTar(parentDir, dir); err != nil {
 		return err
 	}
 	return nil

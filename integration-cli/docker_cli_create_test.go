@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"testing"
 	"time"
@@ -124,4 +125,24 @@ func TestCreateEchoStdout(t *testing.T) {
 	deleteAllContainers()
 
 	logDone("create - echo test123")
+}
+
+func TestCreateVolumesCreated(t *testing.T) {
+	name := "test_create_volume"
+	if out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "create", "--name", name, "-v", "/foo", "busybox")); err != nil {
+		t.Fatal(out, err)
+	}
+	dir, err := inspectFieldMap(name, "Volumes", "/foo")
+	if err != nil {
+		t.Fatalf("Error getting volume host path: %q", err)
+	}
+
+	if _, err := os.Stat(dir); err != nil && os.IsNotExist(err) {
+		t.Fatalf("Volume was not created")
+	}
+	if err != nil {
+		t.Fatalf("Error statting volume host path: %q", err)
+	}
+
+	logDone("create - volumes are created")
 }
